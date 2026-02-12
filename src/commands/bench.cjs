@@ -745,6 +745,221 @@ function printResult(r) {
       console.log(`  Speedup: ${m.speedup}x`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'semantic-drift':
+      console.log(`  Generations: ${m.generations}, Total entries: ${m.total_entries}`);
+      console.log(`  High drift avg fitness: ${m.high_drift_avg_fitness}, Low drift avg fitness: ${m.low_drift_avg_fitness}`);
+      console.log(`  Drift-fitness correlation: ${m.drift_fitness_correlation}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'mem-pressure':
+      console.log(`  Total entries: ${m.total_entries}, Fitness wins: ${m.fitness_wins}/${m.total_tests}`);
+      console.log(`  Avg quality ratio: ${m.avg_quality_ratio}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'rel-symmetry':
+      console.log(`  Symmetric co-retrieval: ${m.symmetric_co_retrieval}, Asymmetric: ${m.asymmetric_co_retrieval}`);
+      console.log(`  Improvement: ${m.improvement_pct}%, Exceeds 20%: ${m.exceeds_20pct}`);
+      console.log(`  Bidirectional: ${m.bidirectional_relations}/${m.total_relations}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'node-centrality':
+      console.log(`  High centrality: ${m.high_centrality_count}, Low: ${m.low_centrality_count}`);
+      console.log(`  High cent avg importance: ${m.high_cent_avg_importance}, Low: ${m.low_cent_avg_importance}`);
+      console.log(`  Nodes: ${m.total_nodes}, Edges: ${m.total_edges}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'incr-learning':
+      console.log(`  Related overlap: ${m.related_overlap}, Unrelated: ${m.unrelated_overlap}`);
+      console.log(`  Stabilization ratio: ${m.stabilization_ratio}, Exceeds 2x: ${m.ratio_exceeds_2x}`);
+      console.log(`  Total entries: ${m.total_entries}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'partition-eff':
+      console.log(`  Partitioned: ${m.partitioned_time_ms}ms, Flat: ${m.flat_time_ms}ms`);
+      console.log(`  Speedup: ${m.speedup_pct}%, Exceeds 30%: ${m.exceeds_30pct}`);
+      console.log(`  Total entries: ${m.total_entries}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'confidence':
+      console.log(`  Conf weighted precision: ${m.conf_weighted_precision}, Unweighted: ${m.unweighted_precision}`);
+      console.log(`  Improvement: ${m.precision_improvement}%, Exceeds 15%: ${m.exceeds_15pct}`);
+      console.log(`  Total entries: ${m.total_entries}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'recency-grad':
+      console.log(`  Sharp preserved useful: ${m.sharp_preserved_useful}, Sigmoid: ${m.sigmoid_preserved_useful}`);
+      console.log(`  Sigmoid better: ${m.sigmoid_better}, Overlap top50: ${m.overlap_top50}`);
+      console.log(`  Total entries: ${m.total_entries}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'graph-density':
+      console.log(`  Optimal density: ${m.optimal_density_min}-${m.optimal_density_max}`);
+      console.log(`  Avg coverage in 2-4: ${m.avg_coverage_in_2_4}%, Outside: ${m.avg_coverage_outside_2_4}%`);
+      console.log(`  Density 2-4 is best: ${m.density_2_4_is_best}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'temporal-batch':
+      console.log(`  Intra-session coherence: ${m.avg_intra_session}, Cross-session: ${m.avg_cross_session}`);
+      console.log(`  Coherence ratio: ${m.coherence_ratio}, Exceeds 3x: ${m.ratio_exceeds_3x}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'fitness-inherit':
+      console.log(`  Captured at 2-hop: ${m.pct_captured_at_2hop}%, At 3-hop: ${m.pct_captured_at_3hop}%`);
+      console.log(`  2-hop captures 90%: ${m.two_hop_captures_90pct}, Depth: ${m.depth}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'memory-replay':
+      console.log(`  Avg replayed fitness: ${m.avg_replayed_fitness}, Unreplayed: ${m.avg_unreplayed_fitness}`);
+      console.log(`  Fitness ratio: ${m.fitness_ratio}, Replayed 50% higher: ${m.replayed_50pct_higher}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'content-novelty':
+      console.log(`  Novel avg fitness: ${m.avg_novel_fitness}, Redundant: ${m.avg_redundant_fitness}`);
+      console.log(`  Retention ratio: ${m.retention_ratio}, Novel 2x retention: ${m.novel_2x_retention}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'query-routing':
+      console.log(`  Avg direct hits: ${m.avg_direct_hits}, Routed: ${m.avg_routed_hits}`);
+      console.log(`  Search reduction: ${m.search_space_reduction_pct}%, Exceeds 40%: ${m.reduction_exceeds_40pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'dep-resilience':
+      console.log(`  Linear survival: ${m.linear_survival_rate}%, Redundant: ${m.redundant_survival_rate}%`);
+      console.log(`  Redundant better: ${m.redundant_better}, Chain length: ${m.chain_length}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'consol-waves':
+      console.log(`  Original: ${m.original_count}, Consolidated: ${m.consolidated_count}`);
+      console.log(`  Reduction: ${m.reduction_pct}%, Recall: ${m.recall_pct}%`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'readwrite-ratio':
+      console.log(`  Best ratio: ${m.best_ratio}, Best ops/sec: ${m.best_ops_sec}`);
+      console.log(`  Ratios tested: ${(m.ratios || []).length}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'semantic-neighbor':
+      console.log(`  High quality: ${m.high_quality_count}, Low quality: ${m.low_quality_count}`);
+      console.log(`  HQ avg fitness: ${m.hq_avg_fitness}, LQ avg fitness: ${m.lq_avg_fitness}`);
+      console.log(`  Precision lift: ${m.precision_lift_pct}%, Exceeds 25%: ${m.lift_exceeds_25pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'gc-efficiency':
+      console.log(`  Total before: ${m.total_before}, Deprecated: ${m.deprecated_count}`);
+      console.log(`  Eager: ${m.eager_time_ms}ms, Lazy: ${m.lazy_time_ms}ms`);
+      console.log(`  Speedup: ${m.speedup_factor}x, Lazy 3x faster: ${m.lazy_3x_faster}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'ctx-packing':
+      console.log(`  Window size: ${m.window_size}, Total entries: ${m.total_entries}`);
+      console.log(`  Greedy vs optimal: ${m.greedy_vs_optimal_pct}%`);
+      console.log(`  Greedy exceeds 90%: ${m.greedy_exceeds_90pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'versioning-cost':
+      console.log(`  Updates performed: ${m.updates_performed}, Version records: ${m.version_records}`);
+      console.log(`  Version time: ${m.version_time_ms}ms, Storage overhead: ${m.storage_overhead_pct}%`);
+      console.log(`  Overhead under 10%: ${m.overhead_under_10pct}, Rollback capable: ${m.rollback_capable}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'rel-pruning':
+      console.log(`  Prune: ${m.prune_count} (${m.prune_pct}%)`);
+      console.log(`  Best strategy: ${m.best_strategy}, Weight is best: ${m.weight_is_best}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'query-fusion':
+      console.log(`  Queries: ${m.query_count}, Individual IDs: ${m.individual_count}, Fused: ${m.fused_count}`);
+      console.log(`  Time reduction: ${m.time_reduction_pct}%, Recall: ${m.recall_fused_pct}%`);
+      console.log(`  Fusion saves 50%: ${m.fusion_saves_50pct}, Recall loss <5%: ${m.recall_loss_under_5pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'snapshot-diff':
+      console.log(`  Total entries: ${m.total_entries}, Changed: ${m.changed_entries}, New: ${m.new_entries}`);
+      console.log(`  Storage reduction: ${m.storage_reduction_pct}%, Diff speedup: ${m.diff_speedup}x`);
+      console.log(`  Reduction exceeds 70%: ${m.reduction_exceeds_70pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'adaptive-batch':
+      console.log(`  Fixed small batches: ${m.fixed_small_batches} (${m.fixed_small_ms}ms)`);
+      console.log(`  Adaptive batches: ${m.adaptive_batches} (${m.adaptive_ms}ms)`);
+      console.log(`  Savings vs small: ${m.savings_vs_small_pct}%, Better than 40%: ${m.adaptive_better_than_40pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'cross-session':
+      console.log(`  Single session: ${m.single_session_count} (avg fitness: ${m.avg_single_fitness})`);
+      console.log(`  Multi session: ${m.multi_session_count} (avg fitness: ${m.avg_multi_fitness})`);
+      console.log(`  Multi/single ratio: ${m.multi_to_single_ratio}, 3x higher: ${m.multi_3x_higher}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'index-select':
+      console.log(`  Best strategy: ${m.best_strategy}, Best time: ${m.best_time_ms}ms`);
+      console.log(`  Composite is optimal: ${m.composite_is_optimal}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'topic-cluster':
+      console.log(`  Total entries: ${m.total_entries}, Clusters: ${m.num_clusters}`);
+      console.log(`  Avg topic coherence: ${m.avg_topic_coherence}, Random: ${m.avg_random_coherence}`);
+      console.log(`  Improvement: ${m.coherence_improvement_pct}%, Above 30%: ${m.improvement_above_30pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'fitness-norm':
+      console.log(`  Sizes tested: ${(m.sizes_tested || []).length}`);
+      console.log(`  Raw CV: ${m.stability_raw_cv}, Z-score CV: ${m.stability_zscore_cv}, MinMax CV: ${m.stability_minmax_cv}`);
+      console.log(`  Best method: ${m.best_method}, Z-score most stable: ${m.zscore_is_most_stable}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'rel-decay':
+      console.log(`  Total relations: ${m.total_relations}, Sample nodes: ${m.sample_nodes}`);
+      console.log(`  Avg raw relevance: ${m.avg_raw_relevance}, Decayed: ${m.avg_decayed_relevance}`);
+      console.log(`  Old reduced: ${m.old_relations_reduced}/${m.old_relations_total}`);
+      console.log(`  Decay improves relevance: ${m.decay_improves_relevance}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'promo-velocity':
+      console.log(`  Current promoted: ${m.current_promoted_count}, Proposed: ${m.proposed_promoted_count}`);
+      console.log(`  Fast in current: ${m.fast_in_current}, Fast in proposed: ${m.fast_in_proposed}`);
+      console.log(`  Proposed captures fast better: ${m.proposed_captures_fast_better}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'query-cache':
+      console.log(`  Total queries: ${m.total_queries}`);
+      console.log(`  No cache: ${m.no_cache_ms}ms, Full cache: ${m.full_cache_ms}ms`);
+      console.log(`  Hit rate: ${m.full_cache_hit_rate_pct}%, Reduction: ${m.full_cache_reduction_pct}%`);
+      console.log(`  Caching reduces 60%: ${m.caching_reduces_60pct}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -862,6 +1077,38 @@ function printAllResults(results) {
       case 'queryplan': console.log(`  [+] queryplan: indexed=${m.using_index}/${m.queries_analyzed}, ratio=${m.optimization_ratio}`); break;
       case 'memfootprint': console.log(`  [+] memfootprint: growth=${m.growth_rate}, sub_linear=${m.sub_linear}`); break;
       case 'checkpoint': console.log(`  [+] checkpoint: best_freq=${m.best_frequency}, speedup=${m.speedup}x`); break;
+      case 'semantic-drift': console.log(`  [+] semantic-drift: corr=${m.drift_fitness_correlation}, high=${m.high_drift_avg_fitness}, low=${m.low_drift_avg_fitness}`); break;
+      case 'mem-pressure': console.log(`  [+] mem-pressure: wins=${m.fitness_wins}/${m.total_tests}, quality=${m.avg_quality_ratio}`); break;
+      case 'rel-symmetry': console.log(`  [+] rel-symmetry: sym=${m.symmetric_co_retrieval}, asym=${m.asymmetric_co_retrieval}, impr=${m.improvement_pct}%`); break;
+      case 'node-centrality': console.log(`  [+] node-centrality: high_imp=${m.high_cent_avg_importance}, low_imp=${m.low_cent_avg_importance}, nodes=${m.total_nodes}`); break;
+      case 'incr-learning': console.log(`  [+] incr-learning: related=${m.related_overlap}, unrelated=${m.unrelated_overlap}, ratio=${m.stabilization_ratio}`); break;
+      case 'partition-eff': console.log(`  [+] partition-eff: speedup=${m.speedup_pct}%, partitioned=${m.partitioned_time_ms}ms`); break;
+      case 'confidence': console.log(`  [+] confidence: weighted=${m.conf_weighted_precision}, unweighted=${m.unweighted_precision}, impr=${m.precision_improvement}%`); break;
+      case 'recency-grad': console.log(`  [+] recency-grad: sharp=${m.sharp_preserved_useful}, sigmoid=${m.sigmoid_preserved_useful}, sigmoid_better=${m.sigmoid_better}`); break;
+      case 'graph-density': console.log(`  [+] graph-density: coverage_in_2_4=${m.avg_coverage_in_2_4}%, optimal=${m.density_2_4_is_best}`); break;
+      case 'temporal-batch': console.log(`  [+] temporal-batch: intra=${m.avg_intra_session}, cross=${m.avg_cross_session}, ratio=${m.coherence_ratio}`); break;
+      case 'fitness-inherit': console.log(`  [+] fitness-inherit: 2hop=${m.pct_captured_at_2hop}%, 3hop=${m.pct_captured_at_3hop}%, captures_90=${m.two_hop_captures_90pct}`); break;
+      case 'memory-replay': console.log(`  [+] memory-replay: replayed=${m.avg_replayed_fitness}, unreplayed=${m.avg_unreplayed_fitness}, ratio=${m.fitness_ratio}`); break;
+      case 'content-novelty': console.log(`  [+] content-novelty: novel=${m.avg_novel_fitness}, redundant=${m.avg_redundant_fitness}, retention=${m.retention_ratio}`); break;
+      case 'query-routing': console.log(`  [+] query-routing: direct=${m.avg_direct_hits}, routed=${m.avg_routed_hits}, reduction=${m.search_space_reduction_pct}%`); break;
+      case 'dep-resilience': console.log(`  [+] dep-resilience: linear=${m.linear_survival_rate}%, redundant=${m.redundant_survival_rate}%, better=${m.redundant_better}`); break;
+      case 'consol-waves': console.log(`  [+] consol-waves: original=${m.original_count}, consolidated=${m.consolidated_count}, reduction=${m.reduction_pct}%`); break;
+      case 'readwrite-ratio': console.log(`  [+] readwrite-ratio: best=${m.best_ratio}, ops_sec=${m.best_ops_sec}`); break;
+      case 'semantic-neighbor': console.log(`  [+] semantic-neighbor: high=${m.high_quality_count}, low=${m.low_quality_count}, lift=${m.precision_lift_pct}%`); break;
+      case 'gc-efficiency': console.log(`  [+] gc-efficiency: before=${m.total_before}, deprecated=${m.deprecated_count}, speedup=${m.speedup_factor}x`); break;
+      case 'ctx-packing': console.log(`  [+] ctx-packing: greedy_vs_optimal=${m.greedy_vs_optimal_pct}%, exceeds_90=${m.greedy_exceeds_90pct}`); break;
+      case 'versioning-cost': console.log(`  [+] versioning-cost: updates=${m.updates_performed}, overhead=${m.storage_overhead_pct}%, under_10=${m.overhead_under_10pct}`); break;
+      case 'rel-pruning': console.log(`  [+] rel-pruning: pruned=${m.prune_count} (${m.prune_pct}%), best=${m.best_strategy}`); break;
+      case 'query-fusion': console.log(`  [+] query-fusion: individual=${m.individual_count}, fused=${m.fused_count}, time_reduction=${m.time_reduction_pct}%`); break;
+      case 'snapshot-diff': console.log(`  [+] snapshot-diff: reduction=${m.storage_reduction_pct}%, speedup=${m.diff_speedup}x`); break;
+      case 'adaptive-batch': console.log(`  [+] adaptive-batch: fixed=${m.fixed_small_ms}ms, adaptive=${m.adaptive_ms}ms, savings=${m.savings_vs_small_pct}%`); break;
+      case 'cross-session': console.log(`  [+] cross-session: single=${m.avg_single_fitness}, multi=${m.avg_multi_fitness}, ratio=${m.multi_to_single_ratio}`); break;
+      case 'index-select': console.log(`  [+] index-select: best=${m.best_strategy}, time=${m.best_time_ms}ms, composite_optimal=${m.composite_is_optimal}`); break;
+      case 'topic-cluster': console.log(`  [+] topic-cluster: coherence=${m.avg_topic_coherence}, random=${m.avg_random_coherence}, impr=${m.coherence_improvement_pct}%`); break;
+      case 'fitness-norm': console.log(`  [+] fitness-norm: best=${m.best_method}, raw_cv=${m.stability_raw_cv}, zscore_cv=${m.stability_zscore_cv}`); break;
+      case 'rel-decay': console.log(`  [+] rel-decay: raw=${m.avg_raw_relevance}, decayed=${m.avg_decayed_relevance}, improves=${m.decay_improves_relevance}`); break;
+      case 'promo-velocity': console.log(`  [+] promo-velocity: current=${m.current_promoted_count}, proposed=${m.proposed_promoted_count}, better=${m.proposed_captures_fast_better}`); break;
+      case 'query-cache': console.log(`  [+] query-cache: no_cache=${m.no_cache_ms}ms, cached=${m.full_cache_ms}ms, hit_rate=${m.full_cache_hit_rate_pct}%`); break;
     }
   }
   console.log('');
