@@ -528,6 +528,223 @@ function printResult(r) {
       console.log(`  Improvement: +${m.separation_improvement}`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'slidingwin':
+      console.log(`  Window size: ${m.window_size}`);
+      console.log(`  All-time separation: ${m.alltime_separation}, Window separation: ${m.window_separation}`);
+      console.log(`  Improvement: +${m.improvement}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'momentum':
+      console.log(`  Rising base avg: ${m.rising_base_avg}, Momentum avg: ${m.rising_momentum_avg}`);
+      console.log(`  Base separation: ${m.base_separation}, Momentum separation: ${m.momentum_separation}`);
+      console.log(`  Momentum bonus: +${m.momentum_bonus}, Improvement: +${m.improvement}`);
+      console.log(`  Rising with momentum: ${m.rising_with_momentum}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'peercomp':
+      console.log(`  Entries: ${m.total_entries}, Types: ${m.types}`);
+      console.log(`  Absolute separation: ${m.absolute_separation}, Peer separation: ${m.peer_separation}`);
+      console.log(`  Improvement: +${m.improvement}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'accessentropy':
+      console.log(`  Regular entropy avg: ${m.regular_entropy_avg}, Bursty: ${m.bursty_entropy_avg}`);
+      console.log(`  Entropy separation: ${m.entropy_separation}, Base separation: ${m.base_separation}`);
+      console.log(`  Improvement: +${m.improvement}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'writeamp':
+      console.log(`  Individual: ${m.individual_writes} writes in ${m.individual_ms}ms`);
+      console.log(`  Batch: ${m.batch_writes} writes in ${m.batch_ms}ms`);
+      console.log(`  Reduction factor: ${m.reduction_factor}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'layermigcost':
+      console.log(`  Eager: ${m.eager_promotions} promotions in ${m.eager_ms}ms`);
+      console.log(`  Threshold: ${m.threshold_promotions} promotions in ${m.threshold_ms}ms`);
+      console.log(`  Unnecessary migrations: ${m.unnecessary_migrations}`);
+      console.log(`  Cost ratio: ${m.cost_ratio}x, Threshold cheaper: ${m.threshold_is_cheaper}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'ctxsaturation':
+      console.log(`  Budgets tested: ${m.budgets_tested}`);
+      console.log(`  Optimal fill: ${m.optimal_fill_pct}%`);
+      console.log(`  First marginal gain: ${m.first_marginal_gain}, Last: ${m.last_marginal_gain}`);
+      console.log(`  Diminishing confirmed: ${m.diminishing_confirmed}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'latencydist':
+      console.log(`  P50: ${m.p50_ms}ms, P95: ${m.p95_ms}ms, P99: ${m.p99_ms}ms`);
+      console.log(`  Mean: ${m.mean_ms}ms, Std: ${m.std_ms}ms`);
+      console.log(`  P99/P50 ratio: ${m.p99_to_p50_ratio}x (target <5x)`);
+      console.log(`  P99 under 5x P50: ${m.p99_under_5x_p50}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    // Round 9: BS-BZ
+    case 'surprise':
+      console.log(`  Memorability ratio: ${m.memorability_ratio}x, Surprise boost: ${m.surprise_boost}`);
+      console.log(`  Surprise avg: ${m.avg_surprise_score}, Normal avg: ${m.avg_normal_score}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'usagedecay':
+      console.log(`  Half-life: ${m.halflife_days} days`);
+      console.log(`  Active avg: ${m.active_avg_fitness}, Inactive avg: ${m.inactive_avg_fitness}`);
+      console.log(`  Separation: ${m.separation}, Decay effective: ${m.decay_effective}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'transitivity':
+      console.log(`  Direct reach: ${m.direct_reach}, Transitive reach: ${m.transitive_reach}`);
+      console.log(`  Amplification: ${m.transitivity_amplification}x, Max depth: ${m.max_depth}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'compressratio':
+      console.log(`  Original: ${m.original_count} entries (${m.original_bytes}B) → Compressed: ${m.compressed_count} (${m.compressed_bytes}B)`);
+      console.log(`  Compression ratio: ${m.compression_ratio}, Space saved: ${m.space_saved_pct}%`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'queryspec':
+      console.log(`  Queries tested: ${m.queries_tested}, Avg specificity: ${m.avg_specificity}`);
+      console.log(`  Specific precision: ${m.specific_precision}, Broad precision: ${m.broad_precision}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'temploc':
+      console.log(`  Recent: ${m.recent_entries}, Old: ${m.old_entries}`);
+      console.log(`  Locality score: ${m.locality_score}, Temporal advantage: ${m.temporal_advantage}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'importcalib':
+      console.log(`  High: ${m.avg_high_score}, Med: ${m.avg_med_score}, Low: ${m.avg_low_score}`);
+      console.log(`  Monotonic: ${m.monotonic}, Separation: ${m.separation}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'graphdiam':
+      console.log(`  Diameter: ${m.diameter}, Radius: ${m.radius}`);
+      console.log(`  Avg eccentricity: ${m.avg_eccentricity}, Nodes: ${m.nodes}, Edges: ${m.edges}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    // Round 10: CA-CH
+    case 'forgetthresh':
+      console.log(`  Thresholds tested: ${m.thresholds_tested}, Best: ${m.best_threshold}`);
+      console.log(`  Forgotten: ${m.best_forgotten}, Retained: ${m.best_retained}, Separation: ${m.separation}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'batchopt':
+      console.log(`  Batch sizes tested: ${m.batch_sizes_tested}, Best: ${m.best_batch_size}`);
+      console.log(`  Best per-entry: ${m.best_per_entry_ms}ms, Speedup vs single: ${m.speedup_vs_single}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'importdist':
+      console.log(`  Count: ${m.count}, Mean: ${m.mean}, Std: ${m.std}, Median: ${m.median}`);
+      console.log(`  Skewness: ${m.skewness}, Gini: ${m.gini}`);
+      console.log(`  Low: ${m.low_count}, Mid: ${m.mid_count}, High: ${m.high_count}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'reltypeweight':
+      console.log(`  Relation types: ${m.relation_types}, Weighting effect: ${m.weighting_effect}`);
+      console.log(`  Weighted reach: ${m.total_weighted_reach}, Unweighted: ${m.total_unweighted_reach}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'warmup':
+      console.log(`  Cold avg: ${m.cold_avg_ms}ms, Warm avg: ${m.warm_avg_ms}ms`);
+      console.log(`  Speedup: ${m.speedup}x, Warmup effective: ${m.warmup_effective}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'staleref':
+      console.log(`  Total relations: ${m.total_relations}, Valid: ${m.valid_relations}, Stale: ${m.stale_relations}`);
+      console.log(`  Stale ratio: ${m.stale_ratio}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'ctxoverlap':
+      console.log(`  Selected: ${m.selected}, Avg pairwise overlap: ${m.avg_pairwise_overlap}`);
+      console.log(`  Redundancy: ${m.redundancy}, Info density: ${m.info_density}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'fitnessplateau':
+      console.log(`  Plateaued: ${m.plateaued_count}, Rising: ${m.rising_count}`);
+      console.log(`  Plateau fitness: ${m.avg_plateau_fitness}, Rising fitness: ${m.avg_rising_fitness}`);
+      console.log(`  Separation: ${m.separation}, Plateau detected: ${m.plateau_detected}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    // Round 11: CI-CP
+    case 'concurrent':
+      console.log(`  Readers: ${m.readers}, Writers: ${m.writers}`);
+      console.log(`  Read ops: ${m.read_ops} (avg ${m.avg_read_ms}ms), Write ops: ${m.write_ops} (avg ${m.avg_write_ms}ms)`);
+      console.log(`  Errors: ${m.errors}, Concurrent safe: ${m.concurrent_safe}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'recovery':
+      console.log(`  Before: ${m.before_count}, After: ${m.after_count}`);
+      console.log(`  Recovery: ${m.recovery_ms}ms, Integrity: ${m.integrity}`);
+      console.log(`  Data preserved: ${m.data_preserved}, Recovery successful: ${m.recovery_successful}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'indexeff':
+      console.log(`  Without index: ${m.no_index_avg_ms}ms, With index: ${m.with_index_avg_ms}ms`);
+      console.log(`  Speedup: ${m.speedup}x, Index effective: ${m.index_effective}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'vacuum':
+      console.log(`  Pre-vacuum: ${m.pre_vacuum_bytes}B, Post: ${m.post_vacuum_bytes}B`);
+      console.log(`  Space reduction: ${m.space_reduction_pct}%, Vacuum: ${m.vacuum_ms}ms`);
+      console.log(`  Query before: ${m.pre_query_ms}ms, After: ${m.post_query_ms}ms`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'schemaevol':
+      console.log(`  Before: ${m.before_count}, After: ${m.after_count}`);
+      console.log(`  Data preserved: ${m.data_preserved}, Backward compatible: ${m.backward_compatible}`);
+      console.log(`  Migration1: ${m.migration1_ms}ms, Migration2: ${m.migration2_ms}ms`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'queryplan':
+      console.log(`  Queries analyzed: ${m.queries_analyzed}`);
+      console.log(`  Using index: ${m.using_index}, Full scans: ${m.full_scans}`);
+      console.log(`  Optimization ratio: ${m.optimization_ratio}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'memfootprint':
+      console.log(`  Growth rate: ${m.growth_rate}, Sub-linear: ${m.sub_linear}`);
+      console.log(`  Smallest: ${m.smallest_per_entry}B/entry, Largest: ${m.largest_per_entry}B/entry`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'checkpoint':
+      console.log(`  Frequencies tested: ${m.frequencies_tested}`);
+      console.log(`  Best frequency: ${m.best_frequency} (${m.best_time_ms}ms)`);
+      console.log(`  Worst frequency: ${m.worst_frequency} (${m.worst_time_ms}ms)`);
+      console.log(`  Speedup: ${m.speedup}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -613,6 +830,38 @@ function printAllResults(results) {
       case 'ctxdiversity': console.log(`  [+] ctxdiversity: diverse=${m.div_info_density}, dup=${m.dup_info_density}, MMR +${m.mmr_vs_greedy} words`); break;
       case 'agedist': console.log(`  [+] agedist: balanced=${m.balanced_health}, spread=${m.health_spread}`); break;
       case 'reldensity': console.log(`  [+] reldensity: density sep +${m.separation_improvement}, hub access +${m.hub_access_advantage}`); break;
+      case 'slidingwin': console.log(`  [+] slidingwin: window sep ${m.window_separation}, alltime ${m.alltime_separation}, improvement +${m.improvement}`); break;
+      case 'momentum': console.log(`  [+] momentum: base sep ${m.base_separation}, momentum sep ${m.momentum_separation}, +${m.improvement}`); break;
+      case 'peercomp': console.log(`  [+] peercomp: absolute ${m.absolute_separation}, peer ${m.peer_separation}, +${m.improvement}`); break;
+      case 'accessentropy': console.log(`  [+] accessentropy: entropy sep ${m.entropy_separation}, base ${m.base_separation}, +${m.improvement}`); break;
+      case 'writeamp': console.log(`  [+] writeamp: batch ${m.batch_ms}ms vs individual ${m.individual_ms}ms (${m.reduction_factor}x)`); break;
+      case 'layermigcost': console.log(`  [+] layermigcost: threshold ${m.threshold_promotions} vs eager ${m.eager_promotions}, cost ${m.cost_ratio}x`); break;
+      case 'ctxsaturation': console.log(`  [+] ctxsaturation: optimal fill ${m.optimal_fill_pct}%, diminishing=${m.diminishing_confirmed}`); break;
+      case 'latencydist': console.log(`  [+] latencydist: P50=${m.p50_ms}ms P95=${m.p95_ms}ms P99=${m.p99_ms}ms ratio=${m.p99_to_p50_ratio}x`); break;
+      case 'surprise': console.log(`  [+] surprise: memorability=${m.memorability_ratio}x, boost=${m.surprise_boost}`); break;
+      case 'usagedecay': console.log(`  [+] usagedecay: halflife=${m.halflife_days}d, separation=${m.separation}`); break;
+      case 'transitivity': console.log(`  [+] transitivity: reach=${m.transitive_reach}, amplification=${m.transitivity_amplification}x`); break;
+      case 'compressratio': console.log(`  [+] compressratio: ratio=${m.compression_ratio}, saved=${m.space_saved_pct}%`); break;
+      case 'queryspec': console.log(`  [+] queryspec: specific_prec=${m.specific_precision}, broad_prec=${m.broad_precision}`); break;
+      case 'temploc': console.log(`  [+] temploc: locality=${m.locality_score}, advantage=${m.temporal_advantage}x`); break;
+      case 'importcalib': console.log(`  [+] importcalib: monotonic=${m.monotonic}, separation=${m.separation}`); break;
+      case 'graphdiam': console.log(`  [+] graphdiam: diameter=${m.diameter}, radius=${m.radius}, density=${m.density}`); break;
+      case 'forgetthresh': console.log(`  [+] forgetthresh: best=${m.best_threshold}, separation=${m.separation}`); break;
+      case 'batchopt': console.log(`  [+] batchopt: best_size=${m.best_batch_size}, speedup=${m.speedup_vs_single}x`); break;
+      case 'importdist': console.log(`  [+] importdist: mean=${m.mean}, gini=${m.gini}, skewness=${m.skewness}`); break;
+      case 'reltypeweight': console.log(`  [+] reltypeweight: effect=${m.weighting_effect}, types=${m.relation_types}`); break;
+      case 'warmup': console.log(`  [+] warmup: cold=${m.cold_avg_ms}ms, warm=${m.warm_avg_ms}ms, speedup=${m.speedup}x`); break;
+      case 'staleref': console.log(`  [+] staleref: stale=${m.stale_relations}/${m.total_relations}, ratio=${m.stale_ratio}`); break;
+      case 'ctxoverlap': console.log(`  [+] ctxoverlap: redundancy=${m.redundancy}, info_density=${m.info_density}`); break;
+      case 'fitnessplateau': console.log(`  [+] fitnessplateau: plateaued=${m.plateaued_count}, rising=${m.rising_count}, sep=${m.separation}`); break;
+      case 'concurrent': console.log(`  [+] concurrent: reads=${m.read_ops}, writes=${m.write_ops}, errors=${m.errors}, safe=${m.concurrent_safe}`); break;
+      case 'recovery': console.log(`  [+] recovery: preserved=${m.data_preserved}, integrity=${m.integrity}, ms=${m.recovery_ms}`); break;
+      case 'indexeff': console.log(`  [+] indexeff: speedup=${m.speedup}x, effective=${m.index_effective}`); break;
+      case 'vacuum': console.log(`  [+] vacuum: reduction=${m.space_reduction_pct}%, vacuum_ms=${m.vacuum_ms}`); break;
+      case 'schemaevol': console.log(`  [+] schemaevol: preserved=${m.data_preserved}, compatible=${m.backward_compatible}`); break;
+      case 'queryplan': console.log(`  [+] queryplan: indexed=${m.using_index}/${m.queries_analyzed}, ratio=${m.optimization_ratio}`); break;
+      case 'memfootprint': console.log(`  [+] memfootprint: growth=${m.growth_rate}, sub_linear=${m.sub_linear}`); break;
+      case 'checkpoint': console.log(`  [+] checkpoint: best_freq=${m.best_frequency}, speedup=${m.speedup}x`); break;
     }
   }
   console.log('');

@@ -67,6 +67,41 @@ const {
   benchContextDiversity,
   benchAgeDistribution,
   benchRelationDensity,
+  benchSlidingWindowFitness,
+  benchImportanceMomentum,
+  benchPeerComparison,
+  benchAccessPatternEntropy,
+  benchWriteAmplification,
+  benchLayerMigrationCost,
+  benchContextSaturation,
+  benchRetrievalLatencyDist,
+  // Round 9
+  benchSurpriseScoring,
+  benchUsageDecayHalflife,
+  benchRelationTransitivity,
+  benchCompressionRatio,
+  benchQuerySpecificity,
+  benchTemporalLocality,
+  benchImportanceCalibration,
+  benchGraphDiameter,
+  // Round 10
+  benchForgettingThreshold,
+  benchBatchSizeOptimization,
+  benchImportanceDistribution,
+  benchRelationTypeWeighting,
+  benchMemoryWarmup,
+  benchStaleReferenceDetection,
+  benchContextOverlap,
+  benchFitnessPlateauDetection,
+  // Round 11
+  benchConcurrentAccess,
+  benchRecoveryAfterCrash,
+  benchIndexEffectiveness,
+  benchVacuumImpact,
+  benchSchemaEvolution,
+  benchQueryPlanAnalysis,
+  benchMemoryFootprint,
+  benchCheckpointFrequency,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -75,8 +110,8 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 55 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 55);
+  it('exports BENCHMARKS with 87 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 87);
     for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
                          'latency', 'scalability', 'adversarial', 'decay', 'dedup',
                          'promotion', 'conflict', 'compaction', 'forgetting',
@@ -89,7 +124,15 @@ describe('bench module', () => {
                          'typefitness', 'diminishing', 'contradict', 'prefetch',
                          'budget', 'staleness', 'consolidation', 'feedback',
                          'temporal_validity', 'hybrid', 'autoreflect', 'recencybias',
-                         'priorityevict', 'ctxdiversity', 'agedist', 'reldensity']) {
+                         'priorityevict', 'ctxdiversity', 'agedist', 'reldensity',
+                         'slidingwin', 'momentum', 'peercomp', 'accessentropy',
+                         'writeamp', 'layermigcost', 'ctxsaturation', 'latencydist',
+                         'surprise', 'usagedecay', 'transitivity', 'compressratio',
+                         'queryspec', 'temploc', 'importcalib', 'graphdiam',
+                         'forgetthresh', 'batchopt', 'importdist', 'reltypeweight',
+                         'warmup', 'staleref', 'ctxoverlap', 'fitnessplateau',
+                         'concurrent', 'recovery', 'indexeff', 'vacuum',
+                         'schemaevol', 'queryplan', 'memfootprint', 'checkpoint']) {
       assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
     }
   });
@@ -1404,11 +1447,549 @@ describe('benchRelationDensity [BJ] (requires SQLite)', { skip: skipSqlite && 'P
   });
 });
 
+// ─── Round 8: Hypotheses BK-BR ──────────────────────────────────────────────
+
+describe('benchSlidingWindowFitness [BK] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchSlidingWindowFitness();
+    assert.equal(result.bench, 'slidingwin');
+    assert.ok(result.metrics);
+  });
+  it('sliding window provides better separation', () => {
+    const result = benchSlidingWindowFitness();
+    assert.ok(result.metrics.window_separation >= result.metrics.alltime_separation * 0.8,
+      'Window should provide comparable or better separation');
+  });
+  it('reports hypotheses', () => {
+    const result = benchSlidingWindowFitness();
+    assert.ok(result.metrics.hypotheses.includes('BK_sliding_window_fitness'));
+  });
+});
+
+describe('benchImportanceMomentum [BL] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchImportanceMomentum();
+    assert.equal(result.bench, 'momentum');
+    assert.ok(result.metrics);
+  });
+  it('momentum improves separation for rising entries', () => {
+    const result = benchImportanceMomentum();
+    assert.ok(result.metrics.momentum_separation >= result.metrics.base_separation,
+      'Momentum should improve or maintain separation');
+  });
+  it('reports hypotheses', () => {
+    const result = benchImportanceMomentum();
+    assert.ok(result.metrics.hypotheses.includes('BL_importance_momentum'));
+  });
+});
+
+describe('benchPeerComparison [BM] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchPeerComparison();
+    assert.equal(result.bench, 'peercomp');
+    assert.ok(result.metrics);
+  });
+  it('peer comparison produces meaningful separation', () => {
+    const result = benchPeerComparison();
+    assert.ok(result.metrics.peer_separation > 0,
+      'Peer-relative scoring should produce positive separation');
+  });
+  it('reports hypotheses', () => {
+    const result = benchPeerComparison();
+    assert.ok(result.metrics.hypotheses.includes('BM_peer_comparison'));
+  });
+});
+
+describe('benchAccessPatternEntropy [BN] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchAccessPatternEntropy();
+    assert.equal(result.bench, 'accessentropy');
+    assert.ok(result.metrics);
+  });
+  it('regular patterns score higher than bursty', () => {
+    const result = benchAccessPatternEntropy();
+    assert.ok(result.metrics.regular_entropy_avg >= result.metrics.bursty_entropy_avg,
+      'Regular access should score higher than bursty');
+  });
+  it('reports hypotheses', () => {
+    const result = benchAccessPatternEntropy();
+    assert.ok(result.metrics.hypotheses.includes('BN_access_pattern_entropy'));
+  });
+});
+
+describe('benchWriteAmplification [BO] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchWriteAmplification();
+    assert.equal(result.bench, 'writeamp');
+    assert.ok(result.metrics);
+  });
+  it('batch writes are faster than individual', () => {
+    const result = benchWriteAmplification();
+    assert.ok(result.metrics.reduction_factor >= 1.0,
+      'Batch should be at least as fast as individual writes');
+  });
+  it('reports hypotheses', () => {
+    const result = benchWriteAmplification();
+    assert.ok(result.metrics.hypotheses.includes('BO_write_amplification'));
+  });
+});
+
+describe('benchLayerMigrationCost [BP] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchLayerMigrationCost();
+    assert.equal(result.bench, 'layermigcost');
+    assert.ok(result.metrics);
+  });
+  it('threshold-based has fewer promotions than eager', () => {
+    const result = benchLayerMigrationCost();
+    assert.ok(result.metrics.threshold_promotions <= result.metrics.eager_promotions,
+      'Threshold should be more selective than eager');
+  });
+  it('reports hypotheses', () => {
+    const result = benchLayerMigrationCost();
+    assert.ok(result.metrics.hypotheses.includes('BP_layer_migration_cost'));
+  });
+});
+
+describe('benchContextSaturation [BQ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchContextSaturation();
+    assert.equal(result.bench, 'ctxsaturation');
+    assert.ok(result.metrics);
+  });
+  it('diminishing returns are confirmed', () => {
+    const result = benchContextSaturation();
+    assert.ok(result.metrics.diminishing_confirmed,
+      'Marginal gain should decrease with more context');
+  });
+  it('reports hypotheses', () => {
+    const result = benchContextSaturation();
+    assert.ok(result.metrics.hypotheses.includes('BQ_context_window_saturation'));
+  });
+});
+
+describe('benchRetrievalLatencyDist [BR] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchRetrievalLatencyDist();
+    assert.equal(result.bench, 'latencydist');
+    assert.ok(result.metrics);
+  });
+  it('latency distribution is measured', () => {
+    const result = benchRetrievalLatencyDist();
+    assert.ok(result.metrics.p50_ms >= 0, 'P50 should be non-negative');
+    assert.ok(result.metrics.p99_ms >= result.metrics.p50_ms,
+      'P99 should be >= P50');
+    assert.ok(result.metrics.queries === 100, 'Should run 100 queries');
+  });
+  it('reports hypotheses', () => {
+    const result = benchRetrievalLatencyDist();
+    assert.ok(result.metrics.hypotheses.includes('BR_retrieval_latency_distribution'));
+  });
+});
+
+// ─── Round 9: Hypotheses BS-BZ ──────────────────────────────────────────────
+
+describe('benchSurpriseScoring [BS] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchSurpriseScoring();
+    assert.equal(result.bench, 'surprise');
+    assert.ok(result.metrics);
+  });
+  it('surprise entries get higher memorability', () => {
+    const result = benchSurpriseScoring();
+    const m = result.metrics;
+    assert.ok(m.memorability_ratio > 0, 'Should have positive memorability ratio');
+  });
+  it('reports hypotheses', () => {
+    const result = benchSurpriseScoring();
+    assert.ok(result.metrics.hypotheses.includes('BS_surprise_scoring'));
+  });
+});
+
+describe('benchUsageDecayHalflife [BT] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchUsageDecayHalflife();
+    assert.equal(result.bench, 'usagedecay');
+    assert.ok(result.metrics);
+  });
+  it('active entries have higher fitness than inactive', () => {
+    const result = benchUsageDecayHalflife();
+    const m = result.metrics;
+    assert.ok(m.decay_effective, 'Decay should be effective');
+  });
+  it('reports hypotheses', () => {
+    const result = benchUsageDecayHalflife();
+    assert.ok(result.metrics.hypotheses.includes('BT_usage_decay_halflife'));
+  });
+});
+
+describe('benchRelationTransitivity [BU] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchRelationTransitivity();
+    assert.equal(result.bench, 'transitivity');
+    assert.ok(result.metrics);
+  });
+  it('transitive reach exceeds direct reach', () => {
+    const result = benchRelationTransitivity();
+    const m = result.metrics;
+    assert.ok(m.transitive_reach >= m.direct_reach, 'Transitive should reach more than direct');
+  });
+  it('reports hypotheses', () => {
+    const result = benchRelationTransitivity();
+    assert.ok(result.metrics.hypotheses.includes('BU_relation_transitivity'));
+  });
+});
+
+describe('benchCompressionRatio [BV] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCompressionRatio();
+    assert.equal(result.bench, 'compressratio');
+    assert.ok(result.metrics);
+  });
+  it('compression reduces entry count', () => {
+    const result = benchCompressionRatio();
+    const m = result.metrics;
+    assert.ok(m.entries_reduced > 0, 'Should reduce some entries');
+  });
+  it('reports hypotheses', () => {
+    const result = benchCompressionRatio();
+    assert.ok(result.metrics.hypotheses.includes('BV_memory_compression_ratio'));
+  });
+});
+
+describe('benchQuerySpecificity [BW] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchQuerySpecificity();
+    assert.equal(result.bench, 'queryspec');
+    assert.ok(result.metrics);
+  });
+  it('queries produce results', () => {
+    const result = benchQuerySpecificity();
+    assert.ok(result.metrics.queries_tested > 0, 'Should test some queries');
+  });
+  it('reports hypotheses', () => {
+    const result = benchQuerySpecificity();
+    assert.ok(result.metrics.hypotheses.includes('BW_query_specificity'));
+  });
+});
+
+describe('benchTemporalLocality [BX] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchTemporalLocality();
+    assert.equal(result.bench, 'temploc');
+    assert.ok(result.metrics);
+  });
+  it('temporal locality is effective', () => {
+    const result = benchTemporalLocality();
+    assert.ok(result.metrics.locality_effective, 'Locality should be effective');
+  });
+  it('reports hypotheses', () => {
+    const result = benchTemporalLocality();
+    assert.ok(result.metrics.hypotheses.includes('BX_temporal_locality'));
+  });
+});
+
+describe('benchImportanceCalibration [BY] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchImportanceCalibration();
+    assert.equal(result.bench, 'importcalib');
+    assert.ok(result.metrics);
+  });
+  it('importance ordering is monotonic', () => {
+    const result = benchImportanceCalibration();
+    assert.ok(result.metrics.monotonic, 'High > Med > Low should hold');
+  });
+  it('reports hypotheses', () => {
+    const result = benchImportanceCalibration();
+    assert.ok(result.metrics.hypotheses.includes('BY_importance_calibration'));
+  });
+});
+
+describe('benchGraphDiameter [BZ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchGraphDiameter();
+    assert.equal(result.bench, 'graphdiam');
+    assert.ok(result.metrics);
+  });
+  it('diameter is positive', () => {
+    const result = benchGraphDiameter();
+    assert.ok(result.metrics.diameter > 0, 'Diameter should be positive');
+  });
+  it('reports hypotheses', () => {
+    const result = benchGraphDiameter();
+    assert.ok(result.metrics.hypotheses.includes('BZ_graph_diameter'));
+  });
+});
+
+// ─── Round 10: Hypotheses CA-CH ─────────────────────────────────────────────
+
+describe('benchForgettingThreshold [CA] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchForgettingThreshold();
+    assert.equal(result.bench, 'forgetthresh');
+    assert.ok(result.metrics);
+  });
+  it('finds optimal threshold', () => {
+    const result = benchForgettingThreshold();
+    assert.ok(result.metrics.best_threshold > 0, 'Should find a positive threshold');
+  });
+  it('reports hypotheses', () => {
+    const result = benchForgettingThreshold();
+    assert.ok(result.metrics.hypotheses.includes('CA_forgetting_threshold'));
+  });
+});
+
+describe('benchBatchSizeOptimization [CB] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchBatchSizeOptimization();
+    assert.equal(result.bench, 'batchopt');
+    assert.ok(result.metrics);
+  });
+  it('tests multiple batch sizes', () => {
+    const result = benchBatchSizeOptimization();
+    assert.ok(result.metrics.batch_sizes_tested >= 3, 'Should test multiple sizes');
+  });
+  it('reports hypotheses', () => {
+    const result = benchBatchSizeOptimization();
+    assert.ok(result.metrics.hypotheses.includes('CB_batch_size'));
+  });
+});
+
+describe('benchImportanceDistribution [CC] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchImportanceDistribution();
+    assert.equal(result.bench, 'importdist');
+    assert.ok(result.metrics);
+  });
+  it('distribution has meaningful stats', () => {
+    const result = benchImportanceDistribution();
+    assert.ok(result.metrics.count > 0, 'Should have entries');
+    assert.ok(result.metrics.std > 0, 'Should have non-zero variance');
+  });
+  it('reports hypotheses', () => {
+    const result = benchImportanceDistribution();
+    assert.ok(result.metrics.hypotheses.includes('CC_importance_distribution'));
+  });
+});
+
+describe('benchRelationTypeWeighting [CD] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchRelationTypeWeighting();
+    assert.equal(result.bench, 'reltypeweight');
+    assert.ok(result.metrics);
+  });
+  it('weighting changes reach scores', () => {
+    const result = benchRelationTypeWeighting();
+    assert.ok(result.metrics.weighting_effect > 0, 'Weighting effect should be positive');
+  });
+  it('reports hypotheses', () => {
+    const result = benchRelationTypeWeighting();
+    assert.ok(result.metrics.hypotheses.includes('CD_relation_type_weighting'));
+  });
+});
+
+describe('benchMemoryWarmup [CE] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchMemoryWarmup();
+    assert.equal(result.bench, 'warmup');
+    assert.ok(result.metrics);
+  });
+  it('warmup is effective', () => {
+    const result = benchMemoryWarmup();
+    assert.ok(result.metrics.warmup_effective, 'Warm queries should be <= cold');
+  });
+  it('reports hypotheses', () => {
+    const result = benchMemoryWarmup();
+    assert.ok(result.metrics.hypotheses.includes('CE_memory_warmup'));
+  });
+});
+
+describe('benchStaleReferenceDetection [CF] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchStaleReferenceDetection();
+    assert.equal(result.bench, 'staleref');
+    assert.ok(result.metrics);
+  });
+  it('detects stale references', () => {
+    const result = benchStaleReferenceDetection();
+    assert.ok(result.metrics.stale_relations > 0, 'Should find stale references');
+  });
+  it('reports hypotheses', () => {
+    const result = benchStaleReferenceDetection();
+    assert.ok(result.metrics.hypotheses.includes('CF_stale_reference_detection'));
+  });
+});
+
+describe('benchContextOverlap [CG] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchContextOverlap();
+    assert.equal(result.bench, 'ctxoverlap');
+    assert.ok(result.metrics);
+  });
+  it('measures overlap', () => {
+    const result = benchContextOverlap();
+    assert.ok(result.metrics.avg_pairwise_overlap >= 0, 'Overlap should be non-negative');
+  });
+  it('reports hypotheses', () => {
+    const result = benchContextOverlap();
+    assert.ok(result.metrics.hypotheses.includes('CG_context_overlap'));
+  });
+});
+
+describe('benchFitnessPlateauDetection [CH] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchFitnessPlateauDetection();
+    assert.equal(result.bench, 'fitnessplateau');
+    assert.ok(result.metrics);
+  });
+  it('detects plateaued entries', () => {
+    const result = benchFitnessPlateauDetection();
+    assert.ok(result.metrics.plateau_detected, 'Should detect plateaued entries');
+  });
+  it('reports hypotheses', () => {
+    const result = benchFitnessPlateauDetection();
+    assert.ok(result.metrics.hypotheses.includes('CH_fitness_plateau'));
+  });
+});
+
+// ─── Round 11: Hypotheses CI-CP ─────────────────────────────────────────────
+
+describe('benchConcurrentAccess [CI] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchConcurrentAccess();
+    assert.equal(result.bench, 'concurrent');
+    assert.ok(result.metrics);
+  });
+  it('concurrent access is safe', () => {
+    const result = benchConcurrentAccess();
+    if (result.error) return;
+    assert.ok(result.metrics.concurrent_safe, 'Should have no errors');
+  });
+  it('reports hypotheses', () => {
+    const result = benchConcurrentAccess();
+    assert.ok(result.metrics.hypotheses.includes('CI_concurrent_access'));
+  });
+});
+
+describe('benchRecoveryAfterCrash [CJ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchRecoveryAfterCrash();
+    assert.equal(result.bench, 'recovery');
+    assert.ok(result.metrics);
+  });
+  it('recovery preserves data', () => {
+    const result = benchRecoveryAfterCrash();
+    assert.ok(result.metrics.data_preserved, 'Data should be preserved after recovery');
+    assert.ok(result.metrics.recovery_successful, 'Recovery should succeed');
+  });
+  it('reports hypotheses', () => {
+    const result = benchRecoveryAfterCrash();
+    assert.ok(result.metrics.hypotheses.includes('CJ_recovery_after_crash'));
+  });
+});
+
+describe('benchIndexEffectiveness [CK] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchIndexEffectiveness();
+    assert.equal(result.bench, 'indexeff');
+    assert.ok(result.metrics);
+  });
+  it('index is effective', () => {
+    const result = benchIndexEffectiveness();
+    assert.ok(result.metrics.index_effective, 'Index should be effective');
+  });
+  it('reports hypotheses', () => {
+    const result = benchIndexEffectiveness();
+    assert.ok(result.metrics.hypotheses.includes('CK_index_effectiveness'));
+  });
+});
+
+describe('benchVacuumImpact [CL] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchVacuumImpact();
+    assert.equal(result.bench, 'vacuum');
+    assert.ok(result.metrics);
+  });
+  it('vacuum reclaims space', () => {
+    const result = benchVacuumImpact();
+    assert.ok(result.metrics.space_reclaimed >= 0, 'Should reclaim some space');
+  });
+  it('reports hypotheses', () => {
+    const result = benchVacuumImpact();
+    assert.ok(result.metrics.hypotheses.includes('CL_vacuum_impact'));
+  });
+});
+
+describe('benchSchemaEvolution [CM] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchSchemaEvolution();
+    assert.equal(result.bench, 'schemaevol');
+    assert.ok(result.metrics);
+  });
+  it('migration preserves data', () => {
+    const result = benchSchemaEvolution();
+    assert.ok(result.metrics.data_preserved, 'Data should survive migration');
+    assert.ok(result.metrics.backward_compatible, 'Old queries should still work');
+  });
+  it('reports hypotheses', () => {
+    const result = benchSchemaEvolution();
+    assert.ok(result.metrics.hypotheses.includes('CM_schema_evolution'));
+  });
+});
+
+describe('benchQueryPlanAnalysis [CN] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchQueryPlanAnalysis();
+    assert.equal(result.bench, 'queryplan');
+    assert.ok(result.metrics);
+  });
+  it('analyzes multiple queries', () => {
+    const result = benchQueryPlanAnalysis();
+    assert.ok(result.metrics.queries_analyzed > 0, 'Should analyze queries');
+  });
+  it('reports hypotheses', () => {
+    const result = benchQueryPlanAnalysis();
+    assert.ok(result.metrics.hypotheses.includes('CN_query_plan_analysis'));
+  });
+});
+
+describe('benchMemoryFootprint [CO] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchMemoryFootprint();
+    assert.equal(result.bench, 'memfootprint');
+    assert.ok(result.metrics);
+  });
+  it('measures growth rate', () => {
+    const result = benchMemoryFootprint();
+    assert.ok(typeof result.metrics.growth_rate === 'number', 'Should measure growth rate');
+  });
+  it('reports hypotheses', () => {
+    const result = benchMemoryFootprint();
+    assert.ok(result.metrics.hypotheses.includes('CO_memory_footprint'));
+  });
+});
+
+describe('benchCheckpointFrequency [CP] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCheckpointFrequency();
+    assert.equal(result.bench, 'checkpoint');
+    assert.ok(result.metrics);
+  });
+  it('tests multiple frequencies', () => {
+    const result = benchCheckpointFrequency();
+    assert.ok(result.metrics.frequencies_tested >= 3, 'Should test multiple frequencies');
+  });
+  it('reports hypotheses', () => {
+    const result = benchCheckpointFrequency();
+    assert.ok(result.metrics.hypotheses.includes('CP_checkpoint_frequency'));
+  });
+});
+
 describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 55);
+    assert.equal(results.length, 87);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);
