@@ -43,6 +43,7 @@ Commands:
   backup     Encrypted export of all memory
   uninstall  Clean removal of hooks and files
   gepa       GEPA v2.1 memory paradigm (enable|disable|status|reflect|...)
+  bench      Run memory system benchmarks (recall|persist|fitness|effort|context|drift|all)
 
 Options:
   --help, -h       Show this help
@@ -79,6 +80,7 @@ const commands = {
   backup: '../src/commands/backup.cjs',
   uninstall: '../src/commands/uninstall.cjs',
   gepa: '../src/commands/gepa.cjs',
+  bench: '../src/commands/bench.cjs',
 };
 
 // GEPA subcommand parsing: `gepa enable`, `gepa promote <id>`, etc.
@@ -96,6 +98,15 @@ if (command === 'gepa') {
     if (gepaArg2 && !gepaArg2.startsWith('--')) {
       flags._arg2 = gepaArg2;
     }
+  }
+}
+
+// Bench subcommand parsing: `bench recall`, `bench all --json`, etc.
+if (command === 'bench') {
+  const benchSubIdx = args.indexOf('bench');
+  const benchSub = args[benchSubIdx + 1] || '';
+  if (benchSub && !benchSub.startsWith('--')) {
+    flags._sub = benchSub;
   }
 }
 
