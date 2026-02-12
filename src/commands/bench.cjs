@@ -424,6 +424,55 @@ function printResult(r) {
       console.log(`  Optimal vs short improvement: +${m.optimal_vs_short_improvement}`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'typefitness':
+      console.log(`  Pattern avg: ${m.pattern_avg}, Decision avg: ${m.decision_avg}, Fact avg: ${m.fact_avg}`);
+      console.log(`  Separation: +${m.separation_improvement}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'diminishing':
+      console.log(`  Budgets tested: ${m.budgets_tested}`);
+      console.log(`  First marginal gain: ${m.first_marginal_gain}, Last: ${m.last_marginal_gain}`);
+      console.log(`  Diminishing confirmed: ${m.diminishing_confirmed}, Optimal budget: ${m.optimal_budget}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'contradict':
+      console.log(`  Best strategy: ${m.best_strategy}, Best accuracy: ${m.best_accuracy}`);
+      console.log(`  Conflicts tested: ${m.conflicts_tested}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'prefetch':
+      console.log(`  Markov accuracy: ${pct(m.markov_accuracy)}, Random accuracy: ${pct(m.random_accuracy)}`);
+      console.log(`  Prefetch advantage: ${m.prefetch_advantage}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'budget':
+      console.log(`  Best strategy: ${m.best_strategy}, Best fitness: ${m.best_fitness}`);
+      console.log(`  Total entries: ${m.total_entries}, Budget: ${m.total_budget}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'staleness':
+      console.log(`  Fresh avg: ${m.fresh_avg}, Stale avg: ${m.stale_avg}`);
+      console.log(`  Stale penalty: ${m.stale_penalty}, Separation: +${m.separation_improvement}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'consolidation':
+      console.log(`  Before: ${m.before_count}, After: ${m.after_count}`);
+      console.log(`  Groups: ${m.groups_found}, Merged: ${m.entries_merged}, Compression: ${pct(m.compression_rate)}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'feedback':
+      console.log(`  Used boost: +${m.used_boost}, Ignored penalty: ${m.ignored_penalty}`);
+      console.log(`  Separation: +${m.separation_improvement}, Recall lift: ${m.recall_lift}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -493,6 +542,14 @@ function printAllResults(results) {
       case 'migration': console.log(`  [+] migration: ${m.marginal_blocked} blocked, selectivity +${pct(m.selectivity_improvement)}`); break;
       case 'attention': console.log(`  [+] attention: used +${m.used_boost}, ignored ${m.ignored_penalty}, separation +${m.separation_improvement}`); break;
       case 'contentlen': console.log(`  [+] contentlen: optimal +${m.optimal_boost}, short ${m.short_penalty}, long ${m.long_penalty}`); break;
+      case 'typefitness': console.log(`  [+] typefitness: pattern=${m.pattern_avg}, decision=${m.decision_avg}, sep +${m.separation_improvement}`); break;
+      case 'diminishing': console.log(`  [+] diminishing: confirmed=${m.diminishing_confirmed}, ${m.budgets_tested} budgets`); break;
+      case 'contradict': console.log(`  [+] contradict: best=${m.best_strategy} (${pct(m.best_accuracy)})`); break;
+      case 'prefetch': console.log(`  [+] prefetch: markov=${pct(m.markov_accuracy)} vs random=${pct(m.random_accuracy)} (${m.prefetch_advantage}x)`); break;
+      case 'budget': console.log(`  [+] budget: best=${m.best_strategy} (fitness=${m.best_fitness})`); break;
+      case 'staleness': console.log(`  [+] staleness: fresh=${m.fresh_avg}, stale=${m.stale_avg}, penalty=${m.stale_penalty}`); break;
+      case 'consolidation': console.log(`  [+] consolidation: ${m.before_count}→${m.after_count} (${pct(m.compression_rate)} compression)`); break;
+      case 'feedback': console.log(`  [+] feedback: used +${m.used_boost}, ignored ${m.ignored_penalty}, sep +${m.separation_improvement}`); break;
     }
   }
   console.log('');

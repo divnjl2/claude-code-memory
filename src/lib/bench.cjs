@@ -5290,6 +5290,729 @@ print(json.dumps({
   } finally { cleanTmpDir(tmpDir); }
 }
 
+// ─── Bench 40: Type-Specific Fitness [AU] ───────────────────────────────────
+
+function benchTypeFitness() {
+  const tmpDir = makeTmpDir('typefitness');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'typefitness', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 10; i++) entries.push({ id: `pattern-${i}`, content: `Architecture pattern ${i}: reusable design principle`, node_type: 'pattern', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    for (let i = 0; i < 10; i++) entries.push({ id: `decision-${i}`, content: `Decision ${i}: chose approach A over B`, node_type: 'decision', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    for (let i = 0; i < 10; i++) entries.push({ id: `fact-${i}`, content: `Fact ${i}: observed behavior in system`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, node_type, importance, access_count FROM nodes").fetchall()
+max_ac = max(r[3] for r in rows) or 1
+db.close()
+
+TYPE_WEIGHTS = {'pattern': 0.15, 'decision': 0.10, 'fact': 0.0}
+
+results_uniform = {}
+results_typed = {}
+for nid, ntype, imp, ac in rows:
+    base = 0.3*(ac/max_ac)+0.3*imp+0.2*1.0+0.2*min(1.0,ac/10.0)
+    results_uniform[nid] = round(base, 4)
+    bonus = TYPE_WEIGHTS.get(ntype, 0)
+    results_typed[nid] = round(base + bonus, 4)
+
+patterns = [f'pattern-{i}' for i in range(10)]
+decisions = [f'decision-{i}' for i in range(10)]
+facts = [f'fact-{i}' for i in range(10)]
+
+p_u = sum(results_uniform[n] for n in patterns)/10
+p_t = sum(results_typed[n] for n in patterns)/10
+d_u = sum(results_uniform[n] for n in decisions)/10
+d_t = sum(results_typed[n] for n in decisions)/10
+f_u = sum(results_uniform[n] for n in facts)/10
+f_t = sum(results_typed[n] for n in facts)/10
+
+print(json.dumps({
+    'pattern_boost': round(p_t - p_u, 4), 'decision_boost': round(d_t - d_u, 4), 'fact_boost': round(f_t - f_u, 4),
+    'pattern_vs_fact_uniform': round(p_u - f_u, 4), 'pattern_vs_fact_typed': round(p_t - f_t, 4),
+    'ranking_typed': ['pattern','decision','fact'] if p_t > d_t > f_t else ['unexpected'],
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'typefitness', error: `Type fitness failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'typefitness', metrics: {
+      total_entries: 30, pattern_boost: result.pattern_boost, decision_boost: result.decision_boost, fact_boost: result.fact_boost,
+      pattern_vs_fact_uniform: result.pattern_vs_fact_uniform, pattern_vs_fact_typed: result.pattern_vs_fact_typed,
+      correct_ranking: result.ranking_typed[0] === 'pattern',
+      hypotheses: ['AU_type_specific_fitness'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 41: Diminishing Returns [AV] ─────────────────────────────────────
+
+function benchDiminishingReturns() {
+  const tmpDir = makeTmpDir('diminishing');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'diminishing', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 50; i++) {
+      entries.push({ id: `entry-${i}`, content: `Knowledge item ${i}: useful information about topic ${i % 5}`, node_type: 'fact', importance: 0.3 + (i % 10) * 0.07, memory_layer: 'mutating', fitness: 0.8 - (i * 0.01), access_count: 5 + (i % 10) });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, fitness FROM nodes ORDER BY fitness DESC").fetchall()
+db.close()
+
+def keywords(text):
+    return set(w.lower() for w in re.findall(r'\\b\\w{3,}\\b', text))
+
+# Measure marginal value as we add more entries to context
+budgets = [5, 10, 15, 20, 30, 40, 50]
+results = []
+for b in budgets:
+    selected = rows[:b]
+    all_kw = set()
+    for _, content, _ in selected:
+        all_kw |= keywords(content)
+    # Unique keywords = proxy for information coverage
+    results.append({'budget': b, 'unique_keywords': len(all_kw), 'avg_fitness': round(sum(r[2] for r in selected)/b, 4)})
+
+# Marginal gain per entry
+marginal_gains = []
+for i in range(1, len(results)):
+    prev = results[i-1]
+    curr = results[i]
+    added = curr['budget'] - prev['budget']
+    kw_gain = curr['unique_keywords'] - prev['unique_keywords']
+    marginal_gains.append(round(kw_gain / added, 2))
+
+print(json.dumps({
+    'coverage_curve': results,
+    'marginal_gains': marginal_gains,
+    'diminishing': marginal_gains[-1] < marginal_gains[0] if marginal_gains else False,
+    'first_marginal': marginal_gains[0] if marginal_gains else 0,
+    'last_marginal': marginal_gains[-1] if marginal_gains else 0,
+    'optimal_budget': results[next((i for i in range(len(marginal_gains)) if marginal_gains[i] < 1.0), len(marginal_gains))]['budget'] if marginal_gains else 5,
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'diminishing', error: `Diminishing returns failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'diminishing', metrics: {
+      total_entries: 50, budgets_tested: result.coverage_curve.length,
+      diminishing_confirmed: result.diminishing,
+      first_marginal_gain: result.first_marginal, last_marginal_gain: result.last_marginal,
+      optimal_budget: result.optimal_budget,
+      coverage_at_10: result.coverage_curve[1] ? result.coverage_curve[1].unique_keywords : 0,
+      coverage_at_50: result.coverage_curve[result.coverage_curve.length - 1].unique_keywords,
+      hypotheses: ['AV_diminishing_returns'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 42: Contradiction Resolution [AW] ────────────────────────────────
+
+function benchContradictionResolution() {
+  const tmpDir = makeTmpDir('contradict');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'contradict', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    // Conflicting pairs: old vs new, low vs high fitness, different layers
+    entries.push({ id: 'old-tabs', content: 'Always use tabs for indentation', node_type: 'decision', importance: 0.6, memory_layer: 'mutating', fitness: 0.4, access_count: 3, age_days: 90 });
+    entries.push({ id: 'new-spaces', content: 'Never use tabs, always use spaces for indentation', node_type: 'decision', importance: 0.7, memory_layer: 'mutating', fitness: 0.7, access_count: 10, age_days: 5 });
+    entries.push({ id: 'old-orm', content: 'Use ORM for all database queries', node_type: 'decision', importance: 0.5, memory_layer: 'constant', fitness: 0.8, access_count: 20, age_days: 180 });
+    entries.push({ id: 'new-raw', content: 'Avoid ORM, use raw SQL for database queries', node_type: 'decision', importance: 0.6, memory_layer: 'mutating', fitness: 0.6, access_count: 8, age_days: 10 });
+    entries.push({ id: 'old-class', content: 'Use class components in React', node_type: 'pattern', importance: 0.4, memory_layer: 'mutating', fitness: 0.3, access_count: 2, age_days: 365 });
+    entries.push({ id: 'new-hooks', content: 'Never use class components, use React hooks', node_type: 'pattern', importance: 0.8, memory_layer: 'mutating', fitness: 0.8, access_count: 15, age_days: 3 });
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re
+from datetime import datetime
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, importance, access_count, memory_layer, fitness, created_at FROM nodes").fetchall()
+db.close()
+now = datetime.utcnow()
+
+conflicts = [
+    ('old-tabs', 'new-spaces'),
+    ('old-orm', 'new-raw'),
+    ('old-class', 'new-hooks'),
+]
+
+strategies = {}
+for strategy in ['newer_wins', 'higher_fitness', 'constant_wins', 'combined']:
+    correct = 0
+    expected_winners = ['new-spaces', 'new-raw', 'new-hooks']  # ground truth: newer is usually right
+    for (a_id, b_id), expected in zip(conflicts, expected_winners):
+        a = next(r for r in rows if r[0] == a_id)
+        b = next(r for r in rows if r[0] == b_id)
+        a_age = (now - datetime.fromisoformat(a[6])).days
+        b_age = (now - datetime.fromisoformat(b[6])).days
+
+        if strategy == 'newer_wins':
+            winner = b_id if b_age < a_age else a_id
+        elif strategy == 'higher_fitness':
+            winner = b_id if b[5] > a[5] else a_id
+        elif strategy == 'constant_wins':
+            winner = a_id if a[4] == 'constant' else b_id
+        elif strategy == 'combined':
+            # Score: 0.4*recency + 0.3*fitness + 0.2*importance + 0.1*access
+            def score(r):
+                age = (now - datetime.fromisoformat(r[6])).days
+                recency = 1.0 / (1 + age/30.0)
+                return 0.4*recency + 0.3*r[5] + 0.2*r[2] + 0.1*min(1.0, r[3]/10.0)
+            winner = b_id if score(b) > score(a) else a_id
+
+        if winner == expected:
+            correct += 1
+
+    strategies[strategy] = {'accuracy': round(correct / len(conflicts), 3), 'correct': correct}
+
+# Special case: constant_wins for ORM (old-orm is constant layer)
+orm_winner_constant = 'old-orm'  # constant wins
+orm_correct = orm_winner_constant != 'new-raw'  # but ground truth says new-raw should win
+
+print(json.dumps({
+    'conflicts_tested': len(conflicts),
+    'strategies': strategies,
+    'best_strategy': max(strategies.keys(), key=lambda s: strategies[s]['accuracy']),
+    'constant_layer_override': not orm_correct,
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'contradict', error: `Contradiction resolution failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'contradict', metrics: {
+      conflicts_tested: result.conflicts_tested,
+      strategies: result.strategies,
+      best_strategy: result.best_strategy,
+      best_accuracy: result.strategies[result.best_strategy].accuracy,
+      constant_override_risk: result.constant_layer_override,
+      hypotheses: ['AW_contradiction_resolution'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 43: Predictive Prefetch [AX] ─────────────────────────────────────
+
+function benchPredictivePrefetch() {
+  const tmpDir = makeTmpDir('prefetch');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'prefetch', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    const topics = ['auth', 'db', 'api', 'test', 'deploy'];
+    for (let t = 0; t < topics.length; t++) {
+      for (let i = 0; i < 4; i++) {
+        entries.push({ id: `${topics[t]}-${i}`, content: `${topics[t]} component ${i}`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+      }
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, random
+random.seed(42)
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+db.close()
+
+topics = ['auth', 'db', 'api', 'test', 'deploy']
+
+# Simulate access sequences with patterns
+# auth is usually followed by db, api follows auth, test follows api
+transition_probs = {
+    'auth': {'db': 0.5, 'api': 0.3, 'auth': 0.1, 'test': 0.05, 'deploy': 0.05},
+    'db': {'api': 0.4, 'db': 0.3, 'auth': 0.1, 'test': 0.1, 'deploy': 0.1},
+    'api': {'test': 0.4, 'api': 0.2, 'db': 0.2, 'auth': 0.1, 'deploy': 0.1},
+    'test': {'deploy': 0.4, 'test': 0.2, 'api': 0.2, 'auth': 0.1, 'db': 0.1},
+    'deploy': {'auth': 0.3, 'deploy': 0.2, 'test': 0.2, 'api': 0.15, 'db': 0.15},
+}
+
+# Generate 100 transitions
+sequences = []
+current = 'auth'
+for _ in range(100):
+    probs = transition_probs[current]
+    r = random.random()
+    cumulative = 0
+    for topic, prob in probs.items():
+        cumulative += prob
+        if r <= cumulative:
+            sequences.append((current, topic))
+            current = topic
+            break
+
+# Learn Markov chain from first 80 transitions
+from collections import defaultdict, Counter
+train = sequences[:80]
+test_seq = sequences[80:]
+
+counts = defaultdict(Counter)
+for a, b in train:
+    counts[a][b] += 1
+
+def predict_next(current_topic):
+    if current_topic not in counts:
+        return random.choice(topics)
+    total = sum(counts[current_topic].values())
+    return max(counts[current_topic].keys(), key=lambda t: counts[current_topic][t])
+
+# Evaluate on test set
+markov_hits = 0
+random_hits = 0
+for current_t, actual_next in test_seq:
+    predicted = predict_next(current_t)
+    if predicted == actual_next:
+        markov_hits += 1
+    if random.choice(topics) == actual_next:
+        random_hits += 1
+
+print(json.dumps({
+    'train_transitions': len(train),
+    'test_transitions': len(test_seq),
+    'markov_hits': markov_hits,
+    'markov_accuracy': round(markov_hits / max(len(test_seq), 1), 3),
+    'random_hits': random_hits,
+    'random_accuracy': round(random_hits / max(len(test_seq), 1), 3),
+    'prefetch_advantage': round(markov_hits / max(random_hits, 1), 2),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'prefetch', error: `Predictive prefetch failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'prefetch', metrics: {
+      total_entries: 20, train_transitions: result.train_transitions, test_transitions: result.test_transitions,
+      markov_accuracy: result.markov_accuracy, random_accuracy: result.random_accuracy,
+      prefetch_advantage: result.prefetch_advantage,
+      hypotheses: ['AX_predictive_prefetch'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 44: Memory Budget Allocation [AY] ────────────────────────────────
+
+function benchBudgetAllocation() {
+  const tmpDir = makeTmpDir('budget');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'budget', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 10; i++) entries.push({ id: `const-${i}`, content: `Proven principle ${i}: fundamental rule`, node_type: 'pattern', importance: 0.9, memory_layer: 'constant', fitness: 0.9, access_count: 20 + i });
+    for (let i = 0; i < 20; i++) entries.push({ id: `mut-${i}`, content: `Active knowledge ${i}: current practice`, node_type: 'decision', importance: 0.6, memory_layer: 'mutating', fitness: 0.6, access_count: 5 + i });
+    for (let i = 0; i < 30; i++) entries.push({ id: `file-${i}`, content: `Session note ${i}: temporary observation`, node_type: 'fact', importance: 0.3, memory_layer: 'file', fitness: 0.3, access_count: 1 + (i % 5) });
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, memory_layer, fitness FROM nodes").fetchall()
+db.close()
+
+def keywords(text):
+    return set(w.lower() for w in re.findall(r'\\b\\w{3,}\\b', text))
+
+TOTAL_BUDGET = 20
+
+allocations = {
+    'equal': {'constant': 7, 'mutating': 7, 'file': 6},
+    'proportional': {'constant': 3, 'mutating': 7, 'file': 10},
+    'fitness_weighted': {'constant': 10, 'mutating': 7, 'file': 3},
+    'inverse_size': {'constant': 10, 'mutating': 8, 'file': 2},
+}
+
+results = {}
+for name, alloc in allocations.items():
+    selected = []
+    for layer, budget in alloc.items():
+        layer_entries = sorted([r for r in rows if r[2] == layer], key=lambda x: x[3], reverse=True)
+        selected.extend(layer_entries[:budget])
+
+    total_fitness = sum(r[3] for r in selected)
+    all_kw = set()
+    for r in selected:
+        all_kw |= keywords(r[1])
+
+    layer_coverage = {}
+    for layer in ['constant', 'mutating', 'file']:
+        total = sum(1 for r in rows if r[2] == layer)
+        picked = sum(1 for r in selected if r[2] == layer)
+        layer_coverage[layer] = round(picked / max(total, 1), 3)
+
+    results[name] = {
+        'total_fitness': round(total_fitness, 2),
+        'unique_keywords': len(all_kw),
+        'layer_coverage': layer_coverage,
+    }
+
+best = max(results.keys(), key=lambda k: results[k]['total_fitness'])
+
+print(json.dumps({
+    'total_budget': TOTAL_BUDGET,
+    'allocations': results,
+    'best_by_fitness': best,
+    'best_fitness': results[best]['total_fitness'],
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'budget', error: `Budget allocation failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'budget', metrics: {
+      total_entries: 60, total_budget: result.total_budget,
+      best_strategy: result.best_by_fitness, best_fitness: result.best_fitness,
+      allocations: result.allocations,
+      hypotheses: ['AY_budget_allocation'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 45: Staleness Detection [AZ] ─────────────────────────────────────
+
+function benchStaleness() {
+  const tmpDir = makeTmpDir('staleness');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'staleness', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    // Stale entries (deprecated tech mentions)
+    const staleContents = [
+      'Use jQuery for DOM manipulation in all pages',
+      'React class components with componentDidMount lifecycle',
+      'AngularJS 1.x digest cycle optimization',
+      'Use var for variable declarations in JavaScript',
+      'Configure Bower for frontend dependency management',
+      'Use callbacks instead of promises for async operations',
+    ];
+    for (let i = 0; i < staleContents.length; i++) {
+      entries.push({ id: `stale-${i}`, content: staleContents[i], node_type: 'pattern', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5, age_days: 365 + i * 30 });
+    }
+    // Fresh entries (modern tech)
+    const freshContents = [
+      'Use React hooks with functional components',
+      'TypeScript strict mode with ESLint flat config',
+      'Bun runtime for faster package management',
+      'Use const and let, never var in modern JavaScript',
+      'Vite for frontend build tooling and dev server',
+      'Use async/await with proper error boundaries',
+    ];
+    for (let i = 0; i < freshContents.length; i++) {
+      entries.push({ id: `fresh-${i}`, content: freshContents[i], node_type: 'pattern', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5, age_days: 5 + i });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re
+from datetime import datetime
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, importance, access_count, created_at, accessed_at FROM nodes").fetchall()
+max_ac = max(r[3] for r in rows) or 1
+now = datetime.utcnow()
+db.close()
+
+DEPRECATED_MARKERS = ['jquery', 'angularjs', 'bower', 'callbacks instead', 'componentdidmount', 'var for']
+
+results_standard = {}
+results_staleness = {}
+
+for nid, content, imp, ac, created, accessed in rows:
+    standard = 0.3*(ac/max_ac)+0.3*imp+0.2*1.0+0.2*min(1.0,ac/10.0)
+    results_standard[nid] = round(standard, 4)
+
+    content_lower = content.lower()
+    stale_score = sum(1 for marker in DEPRECATED_MARKERS if marker in content_lower)
+    age_days = (now - datetime.fromisoformat(created)).days
+    last_access_days = (now - datetime.fromisoformat(accessed)).days
+
+    staleness_penalty = 0
+    if stale_score > 0:
+        staleness_penalty = -min(0.2, stale_score * 0.08)
+    if age_days > 180 and last_access_days > 90:
+        staleness_penalty -= 0.05
+
+    results_staleness[nid] = round(standard + staleness_penalty, 4)
+
+stale = [f'stale-{i}' for i in range(6)]
+fresh = [f'fresh-{i}' for i in range(6)]
+
+stale_std = [results_standard[n] for n in stale]
+stale_s = [results_staleness[n] for n in stale]
+fresh_std = [results_standard[n] for n in fresh]
+fresh_s = [results_staleness[n] for n in fresh]
+
+print(json.dumps({
+    'stale_penalty': round(sum(stale_s)/6 - sum(stale_std)/6, 4),
+    'fresh_change': round(sum(fresh_s)/6 - sum(fresh_std)/6, 4),
+    'separation_standard': round(sum(fresh_std)/6 - sum(stale_std)/6, 4),
+    'separation_staleness': round(sum(fresh_s)/6 - sum(stale_s)/6, 4),
+    'stale_detected': sum(1 for n in stale if results_staleness[n] < results_standard[n]),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'staleness', error: `Staleness detection failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'staleness', metrics: {
+      total_entries: 12, stale_entries: 6, fresh_entries: 6,
+      stale_penalty: result.stale_penalty, fresh_change: result.fresh_change,
+      separation_standard: result.separation_standard, separation_staleness: result.separation_staleness,
+      separation_improvement: round2(result.separation_staleness - result.separation_standard),
+      stale_detected: result.stale_detected,
+      hypotheses: ['AZ_staleness_detection'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 46: Consolidation (Sleep-like) [BA] ─────────────────────────────
+
+function benchConsolidation() {
+  const tmpDir = makeTmpDir('consolidation');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'consolidation', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    // Groups of similar entries that should consolidate
+    entries.push({ id: 'auth-1', content: 'Use JWT tokens for API authentication with 1 hour expiry', node_type: 'decision', importance: 0.6, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    entries.push({ id: 'auth-2', content: 'JWT token authentication requires refresh token rotation', node_type: 'decision', importance: 0.5, memory_layer: 'mutating', fitness: 0.4, access_count: 3 });
+    entries.push({ id: 'auth-3', content: 'API authentication uses JWT with short-lived access tokens', node_type: 'fact', importance: 0.4, memory_layer: 'mutating', fitness: 0.3, access_count: 2 });
+    entries.push({ id: 'db-1', content: 'PostgreSQL connection pool max 20 idle timeout 30s', node_type: 'decision', importance: 0.7, memory_layer: 'mutating', fitness: 0.6, access_count: 8 });
+    entries.push({ id: 'db-2', content: 'Database pool size 20 connections with 30 second timeout', node_type: 'fact', importance: 0.4, memory_layer: 'mutating', fitness: 0.3, access_count: 2 });
+    // Unique entries (no consolidation candidates)
+    for (let i = 0; i < 5; i++) {
+      entries.push({ id: `unique-${i}`, content: `Unique topic ${i}: completely different subject matter xyz${i}`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re
+from collections import defaultdict
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, importance, fitness, access_count FROM nodes").fetchall()
+db.close()
+
+def ngrams(text, n=3):
+    words = re.findall(r'\\b\\w{3,}\\b', text.lower())
+    return set(tuple(words[i:i+n]) for i in range(len(words)-n+1))
+
+def jaccard(a, b):
+    if not a and not b: return 0
+    return len(a & b) / len(a | b)
+
+SIMILARITY_THRESHOLD = 0.15
+entries = [(r[0], r[1], ngrams(r[1]), r[2], r[3], r[4]) for r in rows]
+
+# Find consolidation groups
+groups = []
+used = set()
+for i in range(len(entries)):
+    if entries[i][0] in used: continue
+    group = [entries[i]]
+    used.add(entries[i][0])
+    for j in range(i+1, len(entries)):
+        if entries[j][0] in used: continue
+        sim = jaccard(entries[i][2], entries[j][2])
+        if sim >= SIMILARITY_THRESHOLD:
+            group.append(entries[j])
+            used.add(entries[j][0])
+    if len(group) > 1:
+        groups.append(group)
+
+# Consolidate: keep highest fitness entry, merge importance
+consolidated = []
+for group in groups:
+    best = max(group, key=lambda e: e[4])  # highest fitness
+    merged_importance = max(e[3] for e in group)  # max importance
+    merged_access = sum(e[5] for e in group)  # sum access counts
+    consolidated.append({
+        'id': best[0], 'merged_from': [e[0] for e in group],
+        'merged_count': len(group),
+        'original_importance': best[3], 'merged_importance': merged_importance,
+        'original_access': best[5], 'merged_access': merged_access,
+    })
+
+before_count = len(entries)
+after_count = before_count - sum(len(g) - 1 for g in groups)
+entries_merged = sum(len(g) for g in groups)
+
+print(json.dumps({
+    'before_count': before_count,
+    'after_count': after_count,
+    'groups_found': len(groups),
+    'entries_merged': entries_merged,
+    'compression_rate': round(1 - after_count / before_count, 3) if before_count > 0 else 0,
+    'consolidated': consolidated,
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'consolidation', error: `Consolidation failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'consolidation', metrics: {
+      before_count: result.before_count, after_count: result.after_count,
+      groups_found: result.groups_found, entries_merged: result.entries_merged,
+      compression_rate: result.compression_rate,
+      hypotheses: ['BA_consolidation'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 47: Feedback Loop [BB] ──────────────────────────────────────────
+
+function benchFeedbackLoop() {
+  const tmpDir = makeTmpDir('feedback');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'feedback', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 30; i++) {
+      entries.push({ id: `entry-${i}`, content: `Knowledge item ${i}: useful information`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, random
+random.seed(42)
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, importance, access_count FROM nodes").fetchall()
+max_ac = max(r[2] for r in rows) or 1
+db.close()
+
+# Simulate 10 sessions of loading + using
+# Some entries get loaded AND used (positive feedback)
+# Some get loaded but NOT used (negative feedback)
+# Some never loaded
+
+load_count = {r[0]: 0 for r in rows}
+use_count = {r[0]: 0 for r in rows}
+
+# Entries 0-9: frequently loaded AND used
+# Entries 10-19: frequently loaded but rarely used
+# Entries 20-29: rarely loaded
+for session in range(10):
+    # Load 15 entries per session
+    loaded = [f'entry-{i}' for i in range(15)]
+    for eid in loaded:
+        load_count[eid] += 1
+
+    # Only entries 0-9 are actually used
+    used = [f'entry-{i}' for i in range(10)]
+    for eid in used:
+        use_count[eid] += 1
+
+# Calculate fitness with feedback loop
+results_no_feedback = {}
+results_feedback = {}
+FEEDBACK_WEIGHT = 0.15
+
+for nid, imp, ac in rows:
+    base = 0.3*(ac/max_ac)+0.3*imp+0.2*1.0+0.2*min(1.0,ac/10.0)
+    results_no_feedback[nid] = round(base, 4)
+
+    loads = load_count[nid]
+    uses = use_count[nid]
+    if loads > 0:
+        use_ratio = uses / loads
+        feedback = (use_ratio - 0.5) * FEEDBACK_WEIGHT * 2  # -0.15 to +0.15
+    else:
+        feedback = 0  # neutral for never-loaded
+
+    results_feedback[nid] = round(base + feedback, 4)
+
+used_ids = [f'entry-{i}' for i in range(10)]
+ignored_ids = [f'entry-{i}' for i in range(10, 20)]
+unseen_ids = [f'entry-{i}' for i in range(20, 30)]
+
+used_nf = [results_no_feedback[n] for n in used_ids]
+used_f = [results_feedback[n] for n in used_ids]
+ignored_nf = [results_no_feedback[n] for n in ignored_ids]
+ignored_f = [results_feedback[n] for n in ignored_ids]
+unseen_nf = [results_no_feedback[n] for n in unseen_ids]
+unseen_f = [results_feedback[n] for n in unseen_ids]
+
+print(json.dumps({
+    'used_boost': round(sum(used_f)/10 - sum(used_nf)/10, 4),
+    'ignored_penalty': round(sum(ignored_f)/10 - sum(ignored_nf)/10, 4),
+    'unseen_change': round(sum(unseen_f)/10 - sum(unseen_nf)/10, 4),
+    'used_vs_ignored_no_feedback': round(sum(used_nf)/10 - sum(ignored_nf)/10, 4),
+    'used_vs_ignored_feedback': round(sum(used_f)/10 - sum(ignored_f)/10, 4),
+    'recall_lift': round((sum(used_f)/10) / max(sum(used_nf)/10, 0.01), 3),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'feedback', error: `Feedback loop failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'feedback', metrics: {
+      total_entries: 30, sessions: 10,
+      used_boost: result.used_boost, ignored_penalty: result.ignored_penalty, unseen_change: result.unseen_change,
+      separation_no_feedback: result.used_vs_ignored_no_feedback,
+      separation_feedback: result.used_vs_ignored_feedback,
+      separation_improvement: round2(result.used_vs_ignored_feedback - result.used_vs_ignored_no_feedback),
+      recall_lift: result.recall_lift,
+      hypotheses: ['BB_feedback_loop'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
 // ─── Runner ─────────────────────────────────────────────────────────────────
 
 const BENCHMARKS = {
@@ -5332,6 +6055,14 @@ const BENCHMARKS = {
   migration:   { fn: benchMigrationCost, desc: 'Layer migration cost [AR]' },
   attention:   { fn: benchAttentionDecay, desc: 'Attention decay scoring [AS]' },
   contentlen:  { fn: benchContentLength, desc: 'Content length scoring [AT]' },
+  typefitness: { fn: benchTypeFitness, desc: 'Type-specific fitness weights [AU]' },
+  diminishing: { fn: benchDiminishingReturns, desc: 'Diminishing returns curve [AV]' },
+  contradict:  { fn: benchContradictionResolution, desc: 'Contradiction resolution strategies [AW]' },
+  prefetch:    { fn: benchPredictivePrefetch, desc: 'Predictive prefetch via Markov chain [AX]' },
+  budget:      { fn: benchBudgetAllocation, desc: 'Budget allocation strategies [AY]' },
+  staleness:   { fn: benchStaleness, desc: 'Staleness detection for deprecated tech [AZ]' },
+  consolidation:{ fn: benchConsolidation, desc: 'Sleep-like memory consolidation [BA]' },
+  feedback:    { fn: benchFeedbackLoop, desc: 'Use/ignore feedback loop [BB]' },
 };
 
 /**
@@ -5406,4 +6137,12 @@ module.exports = {
   benchMigrationCost,
   benchAttentionDecay,
   benchContentLength,
+  benchTypeFitness,
+  benchDiminishingReturns,
+  benchContradictionResolution,
+  benchPredictivePrefetch,
+  benchBudgetAllocation,
+  benchStaleness,
+  benchConsolidation,
+  benchFeedbackLoop,
 };

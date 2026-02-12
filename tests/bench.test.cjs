@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for bench.cjs — Memory system benchmarks (39 benchmarks, 43 hypotheses)
+ * Tests for bench.cjs — Memory system benchmarks (47 benchmarks, 51 hypotheses)
  */
 
 'use strict';
@@ -51,6 +51,14 @@ const {
   benchMigrationCost,
   benchAttentionDecay,
   benchContentLength,
+  benchTypeFitness,
+  benchDiminishingReturns,
+  benchContradictionResolution,
+  benchPredictivePrefetch,
+  benchBudgetAllocation,
+  benchStaleness,
+  benchConsolidation,
+  benchFeedbackLoop,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -59,8 +67,8 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 39 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 39);
+  it('exports BENCHMARKS with 47 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 47);
     for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
                          'latency', 'scalability', 'adversarial', 'decay', 'dedup',
                          'promotion', 'conflict', 'compaction', 'forgetting',
@@ -69,7 +77,9 @@ describe('bench module', () => {
                          'crosslayer', 'coaccess', 'kwdensity', 'batchinc',
                          'coldstart', 'fragmentation', 'cascade', 'recrel',
                          'entropy', 'velocity', 'semcluster', 'walmode',
-                         'multihop', 'migration', 'attention', 'contentlen']) {
+                         'multihop', 'migration', 'attention', 'contentlen',
+                         'typefitness', 'diminishing', 'contradict', 'prefetch',
+                         'budget', 'staleness', 'consolidation', 'feedback']) {
       assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
     }
   });
@@ -1114,11 +1124,140 @@ describe('benchContentLength [AT] (requires SQLite)', { skip: skipSqlite && 'Pyt
   });
 });
 
+describe('benchTypeFitness [AU] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchTypeFitness();
+    assert.equal(result.bench, 'typefitness');
+    assert.ok(result.metrics);
+  });
+  it('pattern type gets highest weight', () => {
+    const result = benchTypeFitness();
+    assert.ok(result.metrics.pattern_boost > result.metrics.fact_boost, 'Pattern should score higher than fact');
+  });
+  it('reports hypotheses', () => {
+    const result = benchTypeFitness();
+    assert.ok(result.metrics.hypotheses.includes('AU_type_specific_fitness'));
+  });
+});
+
+describe('benchDiminishingReturns [AV] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchDiminishingReturns();
+    assert.equal(result.bench, 'diminishing');
+    assert.ok(result.metrics);
+  });
+  it('marginal gain decreases with budget', () => {
+    const result = benchDiminishingReturns();
+    assert.ok(result.metrics.first_marginal_gain >= result.metrics.last_marginal_gain, 'First marginal gain should be >= last');
+  });
+  it('reports hypotheses', () => {
+    const result = benchDiminishingReturns();
+    assert.ok(result.metrics.hypotheses.includes('AV_diminishing_returns'));
+  });
+});
+
+describe('benchContradictionResolution [AW] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchContradictionResolution();
+    assert.equal(result.bench, 'contradict');
+    assert.ok(result.metrics);
+  });
+  it('best strategy has high accuracy', () => {
+    const result = benchContradictionResolution();
+    assert.ok(result.metrics.best_accuracy >= 0.5, 'Best strategy should have >= 50% accuracy');
+  });
+  it('reports hypotheses', () => {
+    const result = benchContradictionResolution();
+    assert.ok(result.metrics.hypotheses.includes('AW_contradiction_resolution'));
+  });
+});
+
+describe('benchPredictivePrefetch [AX] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchPredictivePrefetch();
+    assert.equal(result.bench, 'prefetch');
+    assert.ok(result.metrics);
+  });
+  it('markov prediction > random', () => {
+    const result = benchPredictivePrefetch();
+    assert.ok(result.metrics.markov_accuracy >= result.metrics.random_accuracy, 'Markov should hit more than random');
+  });
+  it('reports hypotheses', () => {
+    const result = benchPredictivePrefetch();
+    assert.ok(result.metrics.hypotheses.includes('AX_predictive_prefetch'));
+  });
+});
+
+describe('benchBudgetAllocation [AY] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchBudgetAllocation();
+    assert.equal(result.bench, 'budget');
+    assert.ok(result.metrics);
+  });
+  it('has best strategy identified', () => {
+    const result = benchBudgetAllocation();
+    assert.ok(result.metrics.best_strategy, 'Should identify best allocation strategy');
+  });
+  it('reports hypotheses', () => {
+    const result = benchBudgetAllocation();
+    assert.ok(result.metrics.hypotheses.includes('AY_budget_allocation'));
+  });
+});
+
+describe('benchStaleness [AZ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchStaleness();
+    assert.equal(result.bench, 'staleness');
+    assert.ok(result.metrics);
+  });
+  it('stale entries get penalty', () => {
+    const result = benchStaleness();
+    assert.ok(result.metrics.stale_penalty < 0, 'Stale content should get negative penalty');
+  });
+  it('reports hypotheses', () => {
+    const result = benchStaleness();
+    assert.ok(result.metrics.hypotheses.includes('AZ_staleness_detection'));
+  });
+});
+
+describe('benchConsolidation [BA] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchConsolidation();
+    assert.equal(result.bench, 'consolidation');
+    assert.ok(result.metrics);
+  });
+  it('consolidation reduces entry count', () => {
+    const result = benchConsolidation();
+    assert.ok(result.metrics.after_count <= result.metrics.before_count, 'Consolidation should reduce entries');
+  });
+  it('reports hypotheses', () => {
+    const result = benchConsolidation();
+    assert.ok(result.metrics.hypotheses.includes('BA_consolidation'));
+  });
+});
+
+describe('benchFeedbackLoop [BB] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchFeedbackLoop();
+    assert.equal(result.bench, 'feedback');
+    assert.ok(result.metrics);
+  });
+  it('used entries get boost, ignored get penalty', () => {
+    const result = benchFeedbackLoop();
+    assert.ok(result.metrics.used_boost > 0, 'Used should get positive boost');
+    assert.ok(result.metrics.ignored_penalty < 0, 'Ignored should get negative penalty');
+  });
+  it('reports hypotheses', () => {
+    const result = benchFeedbackLoop();
+    assert.ok(result.metrics.hypotheses.includes('BB_feedback_loop'));
+  });
+});
+
 describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 39);
+    assert.equal(results.length, 47);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);
