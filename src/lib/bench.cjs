@@ -6013,6 +6013,405 @@ print(json.dumps({
   } finally { cleanTmpDir(tmpDir); }
 }
 
+// ─── Round 7: Gap-closing + new hypotheses (BC-BJ) ──────────────────────────
+
+function benchTemporalValidity() {
+  const tmpDir = makeTmpDir('temporal-validity');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'temporal_validity', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const now = new Date();
+    const nowISO = now.toISOString();
+
+    // Insert entries with temporal columns directly via Python
+    const dbPathPy = JSON.stringify(dbPath.replace(/\\/g, '/'));
+    const script = `
+import sqlite3, json, math
+from datetime import datetime, timedelta
+db = sqlite3.connect(${dbPathPy})
+try: db.execute('ALTER TABLE nodes ADD COLUMN valid_from TEXT')
+except: pass
+try: db.execute('ALTER TABLE nodes ADD COLUMN valid_until TEXT')
+except: pass
+now = datetime.fromisoformat('${nowISO}'.replace('Z','+00:00'))
+# 10 currently valid
+for i in range(10):
+    vf = (now - timedelta(days=30)).isoformat()
+    vu = (now + timedelta(days=30)).isoformat()
+    db.execute("INSERT INTO nodes (id,content,node_type,importance,access_count,created_at,updated_at,accessed_at,memory_layer,fitness,generation,version,valid_from,valid_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      (f'valid_{i}',f'Current auth pattern {i}','pattern',0.7+i*0.02,5,vf,'${nowISO}','${nowISO}','mutating',0.6,3,2,vf,vu))
+# 10 expired
+for i in range(10):
+    vf = (now - timedelta(days=365)).isoformat()
+    vu = (now - timedelta(days=30)).isoformat()
+    db.execute("INSERT INTO nodes (id,content,node_type,importance,access_count,created_at,updated_at,accessed_at,memory_layer,fitness,generation,version,valid_from,valid_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      (f'expired_{i}',f'Deprecated auth {i}','pattern',0.7+i*0.02,5,vf,vf,vf,'mutating',0.6,3,1,vf,vu))
+# 10 future
+for i in range(10):
+    vf = (now + timedelta(days=30)).isoformat()
+    vu = (now + timedelta(days=365)).isoformat()
+    db.execute("INSERT INTO nodes (id,content,node_type,importance,access_count,created_at,updated_at,accessed_at,memory_layer,fitness,generation,version,valid_from,valid_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      (f'future_{i}',f'Planned migration {i}','pattern',0.7+i*0.02,1,'${nowISO}','${nowISO}','${nowISO}','mutating',0.4,1,1,vf,vu))
+db.commit()
+now_str = '${nowISO}'
+valid_now = db.execute("SELECT id FROM nodes WHERE valid_from<=? AND valid_until>=?", (now_str,now_str)).fetchall()
+all_e = db.execute("SELECT id FROM nodes").fetchall()
+expired = db.execute("SELECT id FROM nodes WHERE valid_until<?", (now_str,)).fetchall()
+future = db.execute("SELECT id FROM nodes WHERE valid_from>?", (now_str,)).fetchall()
+valid_ids = set(r[0] for r in valid_now)
+current_ids = set(f'valid_{i}' for i in range(10))
+prec = len(valid_ids & current_ids) / max(len(valid_ids),1)
+rec = len(valid_ids & current_ids) / max(len(current_ids),1)
+noise_all = len([r for r in all_e if r[0].startswith('expired_') or r[0].startswith('future_')])
+noise_filt = len([r for r in valid_now if r[0].startswith('expired_') or r[0].startswith('future_')])
+nr = 1.0 - (noise_filt / max(noise_all,1))
+f1 = round(2*prec*rec/max(prec+rec,0.001),2)
+db.close()
+print(json.dumps({'total_entries':len(all_e),'valid_now':len(valid_now),'expired':len(expired),'future':len(future),'precision':round(prec,2),'recall':round(rec,2),'noise_reduction':round(nr,2),'f1':f1}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'temporal_validity', error: `Temporal validity failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'temporal_validity', metrics: {
+      ...result,
+      hypotheses: ['BC_temporal_validity'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+function benchHybridRetrieval() {
+  const tmpDir = makeTmpDir('hybrid');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'hybrid', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    const tc = ['JWT authentication with RSA256 signing for secure API access','OAuth2 security flow with PKCE for mobile authentication','Session-based auth with CSRF token security validation','Multi-factor authentication enhances login security','API key authentication with rate limiting for security'];
+    for (let i = 0; i < tc.length; i++) entries.push({ id: `target_${i}`, content: tc[i], node_type: 'pattern', importance: 0.8, access_count: 10, memory_layer: 'constant', fitness: 0.8, generation: 5, version: 2 });
+    for (let i = 0; i < 3; i++) entries.push({ id: `semantic_${i}`, content: ['Verifying user identity through credential validation','Protecting endpoints from unauthorized access attempts','Token-based permission system with role management'][i], node_type: 'pattern', importance: 0.6, access_count: 5, memory_layer: 'mutating', fitness: 0.6, generation: 3, version: 1 });
+    for (let i = 0; i < 3; i++) entries.push({ id: `keyword_${i}`, content: ['Authentication of archaeological findings requires security protocols','Security guards must authenticate visitor badges at entrance','Document authentication for security clearance processing'][i], node_type: 'fact', importance: 0.4, access_count: 2, memory_layer: 'mutating', fitness: 0.4, generation: 1, version: 1 });
+    for (let i = 0; i < 20; i++) entries.push({ id: `noise_${i}`, content: `Database optimization technique ${i} for query performance tuning`, node_type: 'fact', importance: 0.3, access_count: 1, memory_layer: 'file', fitness: 0.3, generation: 1, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,math,re
+from collections import Counter
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+qt=['authentication','security']
+rows=db.execute('SELECT id,content,importance,fitness FROM nodes').fetchall()
+def bm25(c,terms,k1=1.5,b=0.75,adl=20):
+    ws=re.findall(r'\\w+',c.lower());dl=len(ws);fr=Counter(ws);N=len(rows);s=0
+    for t in terms:
+        tf=fr.get(t,0);df=sum(1 for r in rows if t in r[1].lower());idf=math.log((N-df+0.5)/(df+0.5)+1)
+        s+=idf*(tf*(k1+1))/(tf+k1*(1-b+b*dl/adl))
+    return s
+ks=sorted([(r[0],bm25(r[1],qt)) for r in rows],key=lambda x:-x[1])
+kr=[x[0] for x in ks]
+def ngs(t,n=3):t=t.lower();return set(t[i:i+n] for i in range(len(t)-n+1))
+qn=ngs(' '.join(qt))
+ss=sorted([(r[0],len(qn&ngs(r[1]))/max(len(qn|ngs(r[1])),1)) for r in rows],key=lambda x:-x[1])
+sr=[x[0] for x in ss]
+K=60
+def rrf(d,*rs):return sum(1.0/(K+rs[i].index(d)+1) for i in range(len(rs)) if d in rs[i])
+ai=set(kr)|set(sr)
+rs=sorted([(d,rrf(d,kr,sr)) for d in ai],key=lambda x:-x[1])
+rr=[x[0] for x in rs]
+ti=set(f'target_{i}' for i in range(5))
+rk=len(set(kr[:10])&ti)/5;rse=len(set(sr[:10])&ti)/5;rrr=len(set(rr[:10])&ti)/5
+def mrr(r,t):
+    for i,d in enumerate(r):
+        if d in t:return 1.0/(i+1)
+    return 0
+db.close()
+print(json.dumps({'total_entries':len(rows),'keyword_recall_at_10':round(rk,2),'semantic_recall_at_10':round(rse,2),'rrf_recall_at_10':round(rrr,2),'keyword_mrr':round(mrr(kr,ti),3),'semantic_mrr':round(mrr(sr,ti),3),'rrf_mrr':round(mrr(rr,ti),3),'rrf_vs_keyword':round(rrr-rk,2),'rrf_vs_semantic':round(rrr-rse,2),'best_method':'rrf' if rrr>=max(rk,rse) else ('keyword' if rk>=rse else 'semantic')}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'hybrid', error: `Hybrid retrieval failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'hybrid', metrics: { ...result, hypotheses: ['BD_hybrid_retrieval_rrf'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+function benchAutoReflection() {
+  const tmpDir = makeTmpDir('autoreflect');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'autoreflect', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const events = [];
+    for (let i = 0; i < 100; i++) events.push({ id: `event_${i}`, importance: Math.round((0.1 + ((i * 7 + 3) % 100) / 111) * 100) / 100, time: i });
+    const tmpFile = path.join(os.tmpdir(), `ccm-events-${Date.now()}.json`);
+    fs.writeFileSync(tmpFile, JSON.stringify(events));
+    const script = `
+import json,sys
+events=json.load(open(${JSON.stringify(tmpFile.replace(/\\/g, '/'))}))
+def score_strat(refs):
+    if not refs:return 0
+    return sum(r['ai'] for r in refs)/len(refs)*(1+len(refs)/20.0)
+def run_fixed(evts,interval=20):
+    refs=[]
+    for i in range(0,len(evts),interval):
+        b=evts[i:i+interval];ai=sum(e['importance'] for e in b)/len(b)
+        ts={};
+        for e in b:ts[int(e['id'].split('_')[1])%10]=1
+        refs.append({'ai':ai,'d':len(ts)/max(len(b),1)})
+    return refs
+def run_threshold(evts,thr=5.0):
+    refs=[];cs=0;b=[]
+    for e in evts:
+        cs+=e['importance'];b.append(e)
+        if cs>=thr:
+            ai=sum(x['importance'] for x in b)/len(b)
+            ts={};
+            for x in b:ts[int(x['id'].split('_')[1])%10]=1
+            refs.append({'ai':ai,'d':len(ts)/max(len(b),1)});cs=0;b=[]
+    return refs
+def run_adaptive(evts,base=3.0):
+    refs=[];cs=0;b=[];rc=0
+    for e in evts:
+        cs+=e['importance'];b.append(e)
+        if cs>=base+rc*0.5:
+            ai=sum(x['importance'] for x in b)/len(b)
+            ts={};
+            for x in b:ts[int(x['id'].split('_')[1])%10]=1
+            refs.append({'ai':ai,'d':len(ts)/max(len(b),1)});cs=0;b=[];rc+=1
+    return refs
+fr=run_fixed(events);tr=run_threshold(events);ar=run_adaptive(events)
+fs=score_strat(fr);ts=score_strat(tr);asc=score_strat(ar)
+best='adaptive' if asc>=max(fs,ts) else ('threshold' if ts>=fs else 'fixed')
+print(json.dumps({'total_events':len(events),'fixed_reflections':len(fr),'threshold_reflections':len(tr),'adaptive_reflections':len(ar),'fixed_score':round(fs,3),'threshold_score':round(ts,3),'adaptive_score':round(asc,3),'best_strategy':best,'threshold_vs_fixed':round(ts-fs,3),'adaptive_vs_fixed':round(asc-fs,3)}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'autoreflect', error: `Auto-reflection failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    finally { try { fs.unlinkSync(tmpFile); } catch {} }
+    return { bench: 'autoreflect', metrics: { ...result, hypotheses: ['BE_auto_reflection_trigger'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+function benchRecencyBias() {
+  const tmpDir = makeTmpDir('recencybias');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'recencybias', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const now = new Date();
+    const entries = [];
+    for (let i = 0; i < 20; i++) entries.push({ id: `recent_${i}`, content: `Current sprint task ${i}`, node_type: 'decision', importance: 0.5 + (i % 5) * 0.05, access_count: 3 + i, created_at: new Date(now.getTime() - i * 6 * 3600000).toISOString(), memory_layer: 'mutating', fitness: 0.6, generation: 2, version: 1 });
+    for (let i = 0; i < 20; i++) entries.push({ id: `old_${i}`, content: `Historical decision ${i}`, node_type: 'decision', importance: 0.5 + (i % 5) * 0.05, access_count: 3 + i, created_at: new Date(now.getTime() - (30 + i * 3) * 86400000).toISOString(), memory_layer: 'mutating', fitness: 0.6, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const nowISO = now.toISOString();
+    const script = `
+import sqlite3,json,math
+from datetime import datetime
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+now=datetime.fromisoformat('${nowISO}'.replace('Z','+00:00'))
+rows=db.execute('SELECT id,importance,fitness,created_at FROM nodes').fetchall()
+uniform=sorted(rows,key=lambda r:-r[1])[:10]
+def rw(ca,hl=14):
+    try:c=datetime.fromisoformat(ca.replace('Z','+00:00'));d=(now-c).total_seconds()/86400;return math.exp(-0.693*d/hl)
+    except:return 0.5
+biased=sorted([(r[0],r[1]*0.4+rw(r[3])*0.6) for r in rows],key=lambda x:-x[1])[:10]
+floored=sorted([(r[0],max(r[1],0.3)*0.3+rw(r[3])*0.7) for r in rows],key=lambda x:-x[1])[:10]
+ru=sum(1 for r in uniform if r[0].startswith('recent_'))
+rb=sum(1 for r in biased if r[0].startswith('recent_'))
+rf=sum(1 for r in floored if r[0].startswith('recent_'))
+db.close()
+print(json.dumps({'total_entries':len(rows),'uniform_recent_count':ru,'biased_recent_count':rb,'floored_recent_count':rf,'bias_advantage':rb-ru,'best_strategy':'biased' if rb>=max(ru,rf) else ('floored' if rf>=ru else 'uniform')}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'recencybias', error: `Recency bias failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'recencybias', metrics: { ...result, hypotheses: ['BF_recency_biased_sampling'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+function benchPriorityEviction() {
+  const tmpDir = makeTmpDir('priorityevict');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'priorityevict', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 50; i++) {
+      const g = i < 10;
+      entries.push({ id: `entry_${i}`, content: g ? `Critical arch decision ${i}` : `Minor note ${i}`, node_type: g ? 'pattern' : 'fact', importance: g ? 0.8 + (i % 3) * 0.05 : 0.2 + (i % 10) * 0.03, access_count: g ? 10 + i : 1 + (i % 3), memory_layer: 'mutating', fitness: g ? 0.8 + i * 0.01 : 0.2 + (i % 15) * 0.02, generation: g ? 5 : 1, version: g ? 3 : 1 });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,random
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows=db.execute('SELECT id,importance,fitness,access_count,node_type FROM nodes').fetchall()
+cap=30;gi=set(f'entry_{i}' for i in range(10))
+fifo=set(r[0] for r in rows[-cap:]);fg=len(fifo&gi)
+random.seed(42);rk=set(r[0] for r in random.sample(rows,cap));rg=len(rk&gi)
+def pr(r):return r[1]*0.4+r[2]*0.4+min(r[3]/20,1.0)*0.2
+ps=sorted(rows,key=pr,reverse=True);pk=set(r[0] for r in ps[:cap]);pg=len(pk&gi)
+fs=sorted(rows,key=lambda r:-r[2]);fk=set(r[0] for r in fs[:cap]);ffg=len(fk&gi)
+db.close()
+print(json.dumps({'total_entries':len(rows),'capacity':cap,'evicted':len(rows)-cap,'fifo_golden_retained':fg,'random_golden_retained':rg,'priority_golden_retained':pg,'fitness_golden_retained':ffg,'priority_vs_fifo':pg-fg,'priority_vs_random':pg-rg,'best_strategy':'priority' if pg>=max(fg,rg,ffg) else 'other'}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'priorityevict', error: `Priority eviction failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'priorityevict', metrics: { ...result, hypotheses: ['BG_priority_queue_eviction'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+function benchContextDiversity() {
+  const tmpDir = makeTmpDir('ctxdiversity');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'ctxdiversity', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 10; i++) entries.push({ id: `dup_${i}`, content: `Configure JWT authentication with RSA256 signing key rotation policy ${i}`, node_type: 'pattern', importance: 0.7 + i * 0.01, access_count: 5, memory_layer: 'mutating', fitness: 0.7, generation: 3, version: 1 });
+    const dc = ['Database connection pooling with PgBouncer for PostgreSQL','Redis cache invalidation strategy with pub/sub notifications','Docker multi-stage build optimization for Node.js applications','GraphQL schema design with federation for microservices','WebSocket reconnection with exponential backoff strategy','CI/CD pipeline with GitHub Actions and artifact caching','Kubernetes pod autoscaling based on custom metrics','Error boundary implementation in React with Sentry reporting','API rate limiting with token bucket algorithm implementation','Database migration rollback strategy with versioned schemas'];
+    for (let i = 0; i < dc.length; i++) entries.push({ id: `diverse_${i}`, content: dc[i], node_type: 'pattern', importance: 0.7 + i * 0.01, access_count: 5, memory_layer: 'mutating', fitness: 0.7, generation: 3, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,re
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+dr=db.execute("SELECT id,content FROM nodes WHERE id LIKE 'dup_%'").fetchall()
+vr=db.execute("SELECT id,content FROM nodes WHERE id LIKE 'diverse_%'").fetchall()
+def iv(rows):
+    aw=[];uw=set()
+    for r in rows:ws=re.findall(r'\\w+',r[1].lower());aw.extend(ws);uw.update(ws)
+    return len(uw),len(aw),len(uw)/max(len(aw),1)
+du,dt,dd=iv(dr);vu,vt,vd=iv(vr)
+ar=db.execute("SELECT id,content,importance FROM nodes ORDER BY importance DESC").fetchall()
+g5=ar[:5];gu=len(set(w for r in g5 for w in re.findall(r'\\w+',r[1].lower())))
+sel=[ar[0]];cands=list(ar[1:])
+while len(sel)<5 and cands:
+    bs=-1;bi=0
+    for ci,c in enumerate(cands):
+        cw=set(re.findall(r'\\w+',c[1].lower()));ms=0
+        for s in sel:
+            sw=set(re.findall(r'\\w+',s[1].lower()))
+            if cw and sw:ms=max(ms,len(cw&sw)/len(cw|sw))
+        sc=c[2]*0.5-ms*0.5
+        if sc>bs:bs=sc;bi=ci
+    sel.append(cands.pop(bi))
+mu=len(set(w for r in sel for w in re.findall(r'\\w+',r[1].lower())))
+db.close()
+print(json.dumps({'dup_unique_words':du,'div_unique_words':vu,'dup_info_density':round(dd,3),'div_info_density':round(vd,3),'diversity_advantage':round(vd-dd,3),'greedy_unique_words':gu,'mmr_unique_words':mu,'mmr_vs_greedy':mu-gu}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'ctxdiversity', error: `Context diversity failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'ctxdiversity', metrics: { ...result, hypotheses: ['BH_context_diversity_penalty'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+function benchAgeDistribution() {
+  const start = Date.now();
+  const now = new Date();
+  const nowISO = now.toISOString();
+  const python = detectPython();
+  if (!python.available) return { bench: 'agedist', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+  function runScenario(scenarioEntries) {
+    const td = makeTmpDir('agedist');
+    try {
+      initMemoryDir(td);
+      const dp = initDb(td);
+      if (!dp) return { health_score: 0, entropy: 0 };
+      insertNodes(dp, scenarioEntries);
+      const script = `
+import sqlite3,json,math
+from datetime import datetime
+db=sqlite3.connect(${JSON.stringify('PLACEHOLDER')}.replace('PLACEHOLDER',r'${dp.replace(/\\/g, '/')}'))
+now=datetime.fromisoformat('${nowISO}'.replace('Z','+00:00'))
+rows=db.execute('SELECT id,created_at,generation,fitness FROM nodes').fetchall()
+bk=[0,0,0,0]
+for r in rows:
+    try:c=datetime.fromisoformat(r[1].replace('Z','+00:00'));d=(now-c).total_seconds()/86400
+    except:d=30
+    if d<=7:bk[0]+=1
+    elif d<=30:bk[1]+=1
+    elif d<=90:bk[2]+=1
+    else:bk[3]+=1
+t=sum(bk);ps=[b/t for b in bk]
+ent=sum(-p*math.log2(p) for p in ps if p>0)/math.log2(4)
+gs=[r[2] for r in rows];ug=len(set(gs));gd=ug/max(max(gs) if gs else 1,1)
+af=sum(r[3] for r in rows)/len(rows) if rows else 0
+hs=ent*0.5+gd*0.3+af*0.2
+db.close()
+print(json.dumps({'entropy':round(ent,3),'health_score':round(hs,3)}))
+`;
+      const realScript = script.replace("${JSON.stringify('PLACEHOLDER')}.replace('PLACEHOLDER',r'${dp.replace(/\\/g, '/')}')", JSON.stringify(dp.replace(/\\/g, '/')));
+      const out = execFileSync(python.command, ['-c', realScript], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      return JSON.parse(out);
+    } finally { cleanTmpDir(td); }
+  }
+
+  const balanced = [], skewedOld = [], skewedNew = [];
+  for (let i = 0; i < 40; i++) { balanced.push({ id: `bal_${i}`, content: `Balanced ${i}`, node_type: i%3===0?'pattern':'fact', importance: 0.4+(i%5)*0.1, access_count: 1+(i%10), created_at: new Date(now.getTime() - i*3*86400000).toISOString(), memory_layer: 'mutating', fitness: 0.5+(i%10)*0.03, generation: 1+Math.floor(i/10), version: 1 }); }
+  for (let i = 0; i < 40; i++) { skewedOld.push({ id: `old_${i}`, content: `Old ${i}`, node_type: 'fact', importance: 0.4+(i%5)*0.1, access_count: 1, created_at: new Date(now.getTime() - (90+i*2)*86400000).toISOString(), memory_layer: 'mutating', fitness: 0.3+(i%10)*0.02, generation: 1, version: 1 }); }
+  for (let i = 0; i < 40; i++) { skewedNew.push({ id: `new_${i}`, content: `New ${i}`, node_type: 'fact', importance: 0.4+(i%5)*0.1, access_count: 1, created_at: new Date(now.getTime() - i*86400000).toISOString(), memory_layer: 'mutating', fitness: 0.4+(i%10)*0.03, generation: 1, version: 1 }); }
+
+  const rb = runScenario(balanced), ro = runScenario(skewedOld), rn = runScenario(skewedNew);
+  return { bench: 'agedist', metrics: {
+    balanced_health: rb.health_score, skewed_old_health: ro.health_score, skewed_new_health: rn.health_score,
+    balanced_entropy: rb.entropy, skewed_old_entropy: ro.entropy, skewed_new_entropy: rn.entropy,
+    health_spread: Math.round((rb.health_score - Math.min(ro.health_score, rn.health_score)) * 1000) / 1000,
+    best_scenario: rb.health_score >= Math.max(ro.health_score, rn.health_score) ? 'balanced' : 'skewed',
+    hypotheses: ['BI_memory_age_distribution'],
+  }, duration_ms: Date.now() - start };
+}
+
+function benchRelationDensity() {
+  const tmpDir = makeTmpDir('reldensity');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'reldensity', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [], relations = [];
+    for (let i = 0; i < 10; i++) { entries.push({ id: `hub_${i}`, content: `Core module ${i}`, node_type: 'pattern', importance: 0.6, access_count: 5 + i * 2, memory_layer: 'constant', fitness: 0.6, generation: 4, version: 2 }); for (let j = 0; j < 5 + (i % 4); j++) relations.push({ source: `hub_${i}`, target: `leaf_${(i * 5 + j) % 30}`, type: 'depends_on' }); }
+    for (let i = 0; i < 30; i++) entries.push({ id: `leaf_${i}`, content: `Leaf detail ${i}`, node_type: 'fact', importance: 0.6, access_count: 5 + (i % 10), memory_layer: 'mutating', fitness: 0.6, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    insertRelations(dbPath, relations);
+    const script = `
+import sqlite3,json
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows=db.execute('SELECT id,importance,fitness,access_count,node_type FROM nodes').fetchall()
+rc={}
+for r in db.execute('SELECT source_id,target_id FROM relations').fetchall():rc[r[0]]=rc.get(r[0],0)+1;rc[r[1]]=rc.get(r[1],0)+1
+ss={};ds={};mr=max(rc.values()) if rc else 1
+for r in rows:
+    ss[r[0]]=r[1]*0.3+r[2]*0.3+min(r[3]/20,1)*0.2+0.5*0.2
+    ds[r[0]]=ss[r[0]]+(rc.get(r[0],0)/mr)*0.15
+hi=set(f'hub_{i}' for i in range(10))
+hda=sum(ds[h] for h in hi)/len(hi);lda=sum(ds[l] for l in ds if l not in hi)/max(len(ds)-len(hi),1)
+hsa=sum(ss[h] for h in hi)/len(hi);lsa=sum(ss[l] for l in ss if l not in hi)/max(len(ss)-len(hi),1)
+ha=[r[3] for r in rows if r[0].startswith('hub_')];la=[r[3] for r in rows if r[0].startswith('leaf_')]
+db.close()
+print(json.dumps({'total_entries':len(rows),'total_relations':sum(rc.values())//2,'avg_hub_relations':round(sum(rc.get(f'hub_{i}',0) for i in range(10))/10,1),'avg_leaf_relations':round(sum(rc.get(f'leaf_{i}',0) for i in range(30))/30,1),'standard_separation':round(hsa-lsa,3),'density_separation':round(hda-lda,3),'separation_improvement':round((hda-lda)-(hsa-lsa),3),'hub_access_advantage':round(sum(ha)/len(ha)-sum(la)/len(la),1),'density_bonus_value':0.15}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'reldensity', error: `Relation density failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'reldensity', metrics: { ...result, hypotheses: ['BJ_relation_density_scoring'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
 // ─── Runner ─────────────────────────────────────────────────────────────────
 
 const BENCHMARKS = {
@@ -6063,6 +6462,14 @@ const BENCHMARKS = {
   staleness:   { fn: benchStaleness, desc: 'Staleness detection for deprecated tech [AZ]' },
   consolidation:{ fn: benchConsolidation, desc: 'Sleep-like memory consolidation [BA]' },
   feedback:    { fn: benchFeedbackLoop, desc: 'Use/ignore feedback loop [BB]' },
+  temporal_validity: { fn: benchTemporalValidity, desc: 'Temporal validity windows [BC]' },
+  hybrid:      { fn: benchHybridRetrieval, desc: 'Hybrid retrieval RRF [BD]' },
+  autoreflect: { fn: benchAutoReflection, desc: 'Auto-reflection trigger [BE]' },
+  recencybias: { fn: benchRecencyBias, desc: 'Recency-biased sampling [BF]' },
+  priorityevict:{ fn: benchPriorityEviction, desc: 'Priority queue eviction [BG]' },
+  ctxdiversity:{ fn: benchContextDiversity, desc: 'Context diversity penalty [BH]' },
+  agedist:     { fn: benchAgeDistribution, desc: 'Memory age distribution health [BI]' },
+  reldensity:  { fn: benchRelationDensity, desc: 'Relation density scoring [BJ]' },
 };
 
 /**
@@ -6145,4 +6552,12 @@ module.exports = {
   benchStaleness,
   benchConsolidation,
   benchFeedbackLoop,
+  benchTemporalValidity,
+  benchHybridRetrieval,
+  benchAutoReflection,
+  benchRecencyBias,
+  benchPriorityEviction,
+  benchContextDiversity,
+  benchAgeDistribution,
+  benchRelationDensity,
 };

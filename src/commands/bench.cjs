@@ -473,6 +473,61 @@ function printResult(r) {
       console.log(`  Separation: +${m.separation_improvement}, Recall lift: ${m.recall_lift}x`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'temporal_validity':
+      console.log(`  Valid now: ${m.valid_now}, Expired: ${m.expired}, Future: ${m.future}`);
+      console.log(`  Precision: ${pct(m.precision)}, Recall: ${pct(m.recall)}, F1: ${pct(m.f1)}`);
+      console.log(`  Noise reduction: ${pct(m.noise_reduction)}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'hybrid':
+      console.log(`  Keyword recall@10: ${pct(m.keyword_recall_at_10)}, Semantic: ${pct(m.semantic_recall_at_10)}, RRF: ${pct(m.rrf_recall_at_10)}`);
+      console.log(`  MRR — Keyword: ${m.keyword_mrr}, Semantic: ${m.semantic_mrr}, RRF: ${m.rrf_mrr}`);
+      console.log(`  Best method: ${m.best_method}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'autoreflect':
+      console.log(`  Fixed: ${m.fixed_reflections} reflections (score=${m.fixed_score})`);
+      console.log(`  Threshold: ${m.threshold_reflections} reflections (score=${m.threshold_score})`);
+      console.log(`  Adaptive: ${m.adaptive_reflections} reflections (score=${m.adaptive_score})`);
+      console.log(`  Best: ${m.best_strategy}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'recencybias':
+      console.log(`  Uniform recent: ${m.uniform_recent_count}, Biased: ${m.biased_recent_count}, Floored: ${m.floored_recent_count}`);
+      console.log(`  Bias advantage: +${m.bias_advantage}, Best: ${m.best_strategy}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'priorityevict':
+      console.log(`  FIFO golden: ${m.fifo_golden_retained}, Random: ${m.random_golden_retained}`);
+      console.log(`  Priority: ${m.priority_golden_retained}, Fitness-only: ${m.fitness_golden_retained}`);
+      console.log(`  Priority vs FIFO: +${m.priority_vs_fifo}, Best: ${m.best_strategy}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'ctxdiversity':
+      console.log(`  Dup info density: ${m.dup_info_density}, Diverse: ${m.div_info_density}`);
+      console.log(`  Diversity advantage: +${m.diversity_advantage}`);
+      console.log(`  Greedy unique words: ${m.greedy_unique_words}, MMR: ${m.mmr_unique_words}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'agedist':
+      console.log(`  Balanced health: ${m.balanced_health}, Skewed old: ${m.skewed_old_health}, Skewed new: ${m.skewed_new_health}`);
+      console.log(`  Health spread: ${m.health_spread}, Best: ${m.best_scenario}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'reldensity':
+      console.log(`  Hub relations: ${m.avg_hub_relations}, Leaf: ${m.avg_leaf_relations}`);
+      console.log(`  Standard sep: ${m.standard_separation}, Density sep: ${m.density_separation}`);
+      console.log(`  Improvement: +${m.separation_improvement}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -550,6 +605,14 @@ function printAllResults(results) {
       case 'staleness': console.log(`  [+] staleness: fresh=${m.fresh_avg}, stale=${m.stale_avg}, penalty=${m.stale_penalty}`); break;
       case 'consolidation': console.log(`  [+] consolidation: ${m.before_count}→${m.after_count} (${pct(m.compression_rate)} compression)`); break;
       case 'feedback': console.log(`  [+] feedback: used +${m.used_boost}, ignored ${m.ignored_penalty}, sep +${m.separation_improvement}`); break;
+      case 'temporal_validity': console.log(`  [+] temporal_validity: precision=${pct(m.precision)}, recall=${pct(m.recall)}, noise_reduction=${pct(m.noise_reduction)}`); break;
+      case 'hybrid': console.log(`  [+] hybrid: RRF recall=${pct(m.rrf_recall_at_10)}, MRR=${m.rrf_mrr}, best=${m.best_method}`); break;
+      case 'autoreflect': console.log(`  [+] autoreflect: best=${m.best_strategy} (${m.adaptive_score}), vs fixed +${m.adaptive_vs_fixed}`); break;
+      case 'recencybias': console.log(`  [+] recencybias: biased=${m.biased_recent_count}, advantage=+${m.bias_advantage}`); break;
+      case 'priorityevict': console.log(`  [+] priorityevict: priority=${m.priority_golden_retained}/10 golden, vs fifo +${m.priority_vs_fifo}`); break;
+      case 'ctxdiversity': console.log(`  [+] ctxdiversity: diverse=${m.div_info_density}, dup=${m.dup_info_density}, MMR +${m.mmr_vs_greedy} words`); break;
+      case 'agedist': console.log(`  [+] agedist: balanced=${m.balanced_health}, spread=${m.health_spread}`); break;
+      case 'reldensity': console.log(`  [+] reldensity: density sep +${m.separation_improvement}, hub access +${m.hub_access_advantage}`); break;
     }
   }
   console.log('');

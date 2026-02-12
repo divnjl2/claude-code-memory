@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for bench.cjs — Memory system benchmarks (47 benchmarks, 51 hypotheses)
+ * Tests for bench.cjs — Memory system benchmarks (55 benchmarks, 59 hypotheses)
  */
 
 'use strict';
@@ -59,6 +59,14 @@ const {
   benchStaleness,
   benchConsolidation,
   benchFeedbackLoop,
+  benchTemporalValidity,
+  benchHybridRetrieval,
+  benchAutoReflection,
+  benchRecencyBias,
+  benchPriorityEviction,
+  benchContextDiversity,
+  benchAgeDistribution,
+  benchRelationDensity,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -67,8 +75,8 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 47 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 47);
+  it('exports BENCHMARKS with 55 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 55);
     for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
                          'latency', 'scalability', 'adversarial', 'decay', 'dedup',
                          'promotion', 'conflict', 'compaction', 'forgetting',
@@ -79,7 +87,9 @@ describe('bench module', () => {
                          'entropy', 'velocity', 'semcluster', 'walmode',
                          'multihop', 'migration', 'attention', 'contentlen',
                          'typefitness', 'diminishing', 'contradict', 'prefetch',
-                         'budget', 'staleness', 'consolidation', 'feedback']) {
+                         'budget', 'staleness', 'consolidation', 'feedback',
+                         'temporal_validity', 'hybrid', 'autoreflect', 'recencybias',
+                         'priorityevict', 'ctxdiversity', 'agedist', 'reldensity']) {
       assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
     }
   });
@@ -1253,11 +1263,152 @@ describe('benchFeedbackLoop [BB] (requires SQLite)', { skip: skipSqlite && 'Pyth
   });
 });
 
+describe('benchTemporalValidity [BC] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchTemporalValidity();
+    assert.equal(result.bench, 'temporal_validity');
+    assert.ok(result.metrics);
+  });
+  it('temporal filter achieves high precision and recall', () => {
+    const result = benchTemporalValidity();
+    assert.ok(result.metrics.precision >= 0.8, 'Precision should be >= 80%');
+    assert.ok(result.metrics.recall >= 0.8, 'Recall should be >= 80%');
+  });
+  it('noise reduction is effective', () => {
+    const result = benchTemporalValidity();
+    assert.ok(result.metrics.noise_reduction >= 0.5, 'Should filter at least 50% of noise');
+  });
+  it('reports hypotheses', () => {
+    const result = benchTemporalValidity();
+    assert.ok(result.metrics.hypotheses.includes('BC_temporal_validity'));
+  });
+});
+
+describe('benchHybridRetrieval [BD] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchHybridRetrieval();
+    assert.equal(result.bench, 'hybrid');
+    assert.ok(result.metrics);
+  });
+  it('RRF recall >= keyword or semantic alone', () => {
+    const result = benchHybridRetrieval();
+    assert.ok(result.metrics.rrf_recall_at_10 >= Math.min(result.metrics.keyword_recall_at_10, result.metrics.semantic_recall_at_10),
+      'RRF should be at least as good as the weaker method');
+  });
+  it('reports hypotheses', () => {
+    const result = benchHybridRetrieval();
+    assert.ok(result.metrics.hypotheses.includes('BD_hybrid_retrieval_rrf'));
+  });
+});
+
+describe('benchAutoReflection [BE] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchAutoReflection();
+    assert.equal(result.bench, 'autoreflect');
+    assert.ok(result.metrics);
+  });
+  it('threshold/adaptive beats or matches fixed', () => {
+    const result = benchAutoReflection();
+    const m = result.metrics;
+    assert.ok(Math.max(m.threshold_score, m.adaptive_score) >= m.fixed_score * 0.9,
+      'Threshold/adaptive should be close to or better than fixed');
+  });
+  it('reports hypotheses', () => {
+    const result = benchAutoReflection();
+    assert.ok(result.metrics.hypotheses.includes('BE_auto_reflection_trigger'));
+  });
+});
+
+describe('benchRecencyBias [BF] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchRecencyBias();
+    assert.equal(result.bench, 'recencybias');
+    assert.ok(result.metrics);
+  });
+  it('biased loads more recent entries than uniform', () => {
+    const result = benchRecencyBias();
+    assert.ok(result.metrics.biased_recent_count >= result.metrics.uniform_recent_count,
+      'Recency bias should load more recent entries');
+  });
+  it('reports hypotheses', () => {
+    const result = benchRecencyBias();
+    assert.ok(result.metrics.hypotheses.includes('BF_recency_biased_sampling'));
+  });
+});
+
+describe('benchPriorityEviction [BG] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchPriorityEviction();
+    assert.equal(result.bench, 'priorityevict');
+    assert.ok(result.metrics);
+  });
+  it('priority retains more golden than FIFO', () => {
+    const result = benchPriorityEviction();
+    assert.ok(result.metrics.priority_golden_retained >= result.metrics.fifo_golden_retained,
+      'Priority should retain more golden entries than FIFO');
+  });
+  it('reports hypotheses', () => {
+    const result = benchPriorityEviction();
+    assert.ok(result.metrics.hypotheses.includes('BG_priority_queue_eviction'));
+  });
+});
+
+describe('benchContextDiversity [BH] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchContextDiversity();
+    assert.equal(result.bench, 'ctxdiversity');
+    assert.ok(result.metrics);
+  });
+  it('diverse content has higher info density', () => {
+    const result = benchContextDiversity();
+    assert.ok(result.metrics.div_info_density > result.metrics.dup_info_density,
+      'Diverse content should have higher info density');
+  });
+  it('reports hypotheses', () => {
+    const result = benchContextDiversity();
+    assert.ok(result.metrics.hypotheses.includes('BH_context_diversity_penalty'));
+  });
+});
+
+describe('benchAgeDistribution [BI] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchAgeDistribution();
+    assert.equal(result.bench, 'agedist');
+    assert.ok(result.metrics);
+  });
+  it('balanced distribution has highest health score', () => {
+    const result = benchAgeDistribution();
+    assert.ok(result.metrics.balanced_health >= result.metrics.skewed_old_health,
+      'Balanced should be healthier than skewed old');
+  });
+  it('reports hypotheses', () => {
+    const result = benchAgeDistribution();
+    assert.ok(result.metrics.hypotheses.includes('BI_memory_age_distribution'));
+  });
+});
+
+describe('benchRelationDensity [BJ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchRelationDensity();
+    assert.equal(result.bench, 'reldensity');
+    assert.ok(result.metrics);
+  });
+  it('density scoring improves hub/leaf separation', () => {
+    const result = benchRelationDensity();
+    assert.ok(result.metrics.separation_improvement >= 0,
+      'Density bonus should improve separation');
+  });
+  it('reports hypotheses', () => {
+    const result = benchRelationDensity();
+    assert.ok(result.metrics.hypotheses.includes('BJ_relation_density_scoring'));
+  });
+});
+
 describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 47);
+    assert.equal(results.length, 55);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);
