@@ -1,0 +1,36 @@
+{
+  "name": "claude-code-memory",
+  "version": "1.0.0",
+  "description": "4-layer persistent memory system for Claude Code with encrypted storage, auto-cleanup, and cross-session context",
+  "bin": {
+    "claude-code-memory": "./bin/cli.cjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "hooks/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "keywords": [
+    "claude",
+    "claude-code",
+    "memory",
+    "ai",
+    "persistent-memory",
+    "hooks"
+  ],
+  "author": "divnjl2",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/divnjl2/claude-code-memory.git"
+  }
+}
