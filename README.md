@@ -126,12 +126,28 @@ Configured via `.claude-memory/config.json`:
   "maxSizeMB": 10,
   "ttlDays": 30,
   "minImportance": 0.3,
-  "autoCleanupThreshold": 0.8
+  "autoCleanupThreshold": 0.8,
+  "autoPush": false
 }
 ```
 
 Cleanup runs automatically at session-end when DB exceeds 80% of limit.
 Manual: `npx claude-code-memory cleanup --dry-run`
+
+### Auto-Push / Auto-Pull
+
+Enable `autoPush` in config to sync memory to a private git remote automatically:
+
+```bash
+npx claude-code-memory init --remote git@github.com:you/my-memory.git
+# Then edit .claude-memory/config.json → "autoPush": true
+```
+
+With `autoPush: true`:
+- **session-start** — `git pull --rebase` from remote (get latest from other machines)
+- **session-end** — `git commit + git push` to remote (save new memories)
+
+Works offline — if push/pull fails, continues with local memory silently.
 
 ## Configuration
 

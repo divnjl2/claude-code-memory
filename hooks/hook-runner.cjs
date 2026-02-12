@@ -374,6 +374,26 @@ const handlers = {
     ensureDir(path.join(SWARM_DIR, 'handoffs'));
     ensureDir(path.join(MEMORY_DIR, 'history'));
 
+    // Auto-pull from remote at session start (get latest memory from other machines)
+    try {
+      const { execFileSync } = require('child_process');
+      const gitDir = path.join(MEMORY_DIR, '.git');
+      if (fs.existsSync(gitDir)) {
+        const configPath = path.join(MEMORY_DIR, 'config.json');
+        const config = readJSON(configPath) || {};
+        if (config.autoPush) {
+          const remotes = execFileSync('git', ['remote'], {
+            cwd: MEMORY_DIR, encoding: 'utf-8', timeout: 5000, stdio: 'pipe',
+          }).trim();
+          if (remotes.includes('origin')) {
+            execFileSync('git', ['pull', '--rebase', '--autostash', 'origin', 'main'], {
+              cwd: MEMORY_DIR, encoding: 'utf-8', timeout: 15000, stdio: 'pipe',
+            });
+          }
+        }
+      }
+    } catch { /* offline or no remote — continue with local memory */ }
+
     writeJSON(path.join(MEMORY_DIR, 'session.json'), {
       sessionId,
       startTime: now(),
@@ -411,11 +431,15 @@ const handlers = {
     appendLog(path.join(MEMORY_DIR, 'history', 'sessions.jsonl'),
       JSON.stringify({ sessionId: session.sessionId, endTime: now(), event: 'end' }));
 
-    // Auto-commit memory repo if git is available
+    // Auto-commit + auto-push memory repo if git is available
     try {
       const { execFileSync } = require('child_process');
       const gitDir = path.join(MEMORY_DIR, '.git');
       if (fs.existsSync(gitDir)) {
+        // Read config for autoPush
+        const configPath = path.join(MEMORY_DIR, 'config.json');
+        const config = readJSON(configPath) || {};
+
         const status = execFileSync('git', ['status', '--porcelain'], {
           cwd: MEMORY_DIR, encoding: 'utf-8', timeout: 5000, stdio: 'pipe',
         }).trim();
@@ -426,6 +450,29 @@ const handlers = {
           execFileSync('git', ['commit', '-m', `Session ${session.sessionId || 'unknown'} - auto`], {
             cwd: MEMORY_DIR, encoding: 'utf-8', timeout: 5000, stdio: 'pipe',
           });
+        }
+
+        // Auto-push if enabled and remote exists
+        if (config.autoPush) {
+          try {
+            const remotes = execFileSync('git', ['remote'], {
+              cwd: MEMORY_DIR, encoding: 'utf-8', timeout: 5000, stdio: 'pipe',
+            }).trim();
+            if (remotes.includes('origin')) {
+              // Pull first (rebase to avoid merge commits)
+              try {
+                execFileSync('git', ['pull', '--rebase', '--autostash', 'origin', 'main'], {
+                  cwd: MEMORY_DIR, encoding: 'utf-8', timeout: 15000, stdio: 'pipe',
+                });
+              } catch { /* no remote branch yet or offline — ok */ }
+
+              // Push (fire-and-forget via spawn for speed)
+              const child = spawn('git', ['push', '-u', 'origin', 'main'], {
+                cwd: MEMORY_DIR, stdio: 'ignore', detached: true, timeout: 15000,
+              });
+              child.unref();
+            }
+          } catch { /* no remote configured — skip */ }
         }
       }
     } catch { /* git not available or no changes */ }

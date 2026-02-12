@@ -24,6 +24,7 @@ const DEFAULT_CONFIG = {
   minImportance: 0.3,
   encryption: false,
   autoCommit: true,
+  autoPush: false, // Push to remote after auto-commit at session-end
   autoCleanupThreshold: 0.8, // 80% of maxSizeMB triggers auto-cleanup
 };
 

@@ -198,6 +198,7 @@ print("OK")
   console.log(`  Min importance: ${config.minImportance}`);
   console.log(`  Encryption: ${encrypt ? 'ENABLED' : 'disabled'}`);
   console.log(`  Auto-commit: ${config.autoCommit ? 'YES' : 'NO'}`);
+  console.log(`  Auto-push: ${config.autoPush ? 'YES' : 'NO'}`);
 
   // Summary
   console.log('\n' + '='.repeat(50));
