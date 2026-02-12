@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for bench.cjs — Memory system benchmarks (15 benchmarks, 22 hypotheses)
+ * Tests for bench.cjs — Memory system benchmarks (23 benchmarks, 27 hypotheses)
  */
 
 'use strict';
@@ -27,6 +27,14 @@ const {
   benchConflict,
   benchCompaction,
   benchForgetting,
+  benchTemporal,
+  benchInheritance,
+  benchQueryRewrite,
+  benchCapacity,
+  benchGenGap,
+  benchFreshness,
+  benchHubNodes,
+  benchCoherence,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -35,11 +43,13 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 15 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 15);
+  it('exports BENCHMARKS with 23 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 23);
     for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
                          'latency', 'scalability', 'adversarial', 'decay', 'dedup',
-                         'promotion', 'conflict', 'compaction', 'forgetting']) {
+                         'promotion', 'conflict', 'compaction', 'forgetting',
+                         'temporal', 'inheritance', 'queryrewrite', 'capacity',
+                         'gengap', 'freshness', 'hubnodes', 'coherence']) {
       assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
     }
   });
@@ -602,11 +612,195 @@ describe('benchForgetting [V] (requires SQLite)', { skip: skipSqlite && 'Python/
   });
 });
 
+describe('benchTemporal [W] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchTemporal();
+    assert.equal(result.bench, 'temporal');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('clusters have coherence > 0', () => {
+    const result = benchTemporal();
+    assert.ok(result.metrics.avg_coherence > 0, 'Coherence should be > 0');
+  });
+
+  it('cluster loading beats random', () => {
+    const result = benchTemporal();
+    assert.ok(result.metrics.cluster_hits >= result.metrics.random_hits,
+      `Cluster (${result.metrics.cluster_hits}) should >= random (${result.metrics.random_hits})`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchTemporal();
+    assert.ok(result.metrics.hypotheses.includes('W_temporal_clustering'));
+  });
+});
+
+describe('benchInheritance [X] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchInheritance();
+    assert.equal(result.bench, 'inheritance');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('connected entries get boost', () => {
+    const result = benchInheritance();
+    assert.ok(result.metrics.connected_boost > 0,
+      `Connected boost (${result.metrics.connected_boost}) should be > 0`);
+  });
+
+  it('isolated entries get no boost', () => {
+    const result = benchInheritance();
+    assert.equal(result.metrics.isolated_boost, 0, 'Isolated entries should get 0 boost');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchInheritance();
+    assert.ok(result.metrics.hypotheses.includes('X_importance_inheritance'));
+  });
+});
+
+describe('benchQueryRewrite [Y] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchQueryRewrite();
+    assert.equal(result.bench, 'queryrewrite');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('expanded recall >= original recall', () => {
+    const result = benchQueryRewrite();
+    assert.ok(result.metrics.expanded_recall >= result.metrics.original_recall,
+      `Expanded (${result.metrics.expanded_recall}) should >= original (${result.metrics.original_recall})`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchQueryRewrite();
+    assert.ok(result.metrics.hypotheses.includes('Y_query_rewriting'));
+  });
+});
+
+describe('benchCapacity [Z] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCapacity();
+    assert.equal(result.bench, 'capacity');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('golden entries mostly retained', () => {
+    const result = benchCapacity();
+    assert.ok(result.metrics.golden_retention_rate >= 0.8,
+      `Golden retention (${result.metrics.golden_retention_rate}) should be >= 0.8`);
+  });
+
+  it('noise entries mostly evicted', () => {
+    const result = benchCapacity();
+    assert.ok(result.metrics.noise_eviction_rate > 0, 'Some noise should be evicted');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchCapacity();
+    assert.ok(result.metrics.hypotheses.includes('Z_layer_capacity'));
+  });
+});
+
+describe('benchGenGap [AA] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchGenGap();
+    assert.equal(result.bench, 'gengap');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('veterans get positive boost', () => {
+    const result = benchGenGap();
+    assert.ok(result.metrics.veteran_boost > 0, `Veteran boost (${result.metrics.veteran_boost}) should be > 0`);
+  });
+
+  it('separation improves', () => {
+    const result = benchGenGap();
+    assert.ok(result.metrics.separation_improvement >= 0,
+      `Separation improvement (${result.metrics.separation_improvement}) should be >= 0`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchGenGap();
+    assert.ok(result.metrics.hypotheses.includes('AA_generation_gap'));
+  });
+});
+
+describe('benchFreshness [AB] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchFreshness();
+    assert.equal(result.bench, 'freshness');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('updated entries get larger boost than stale', () => {
+    const result = benchFreshness();
+    assert.ok(result.metrics.updated_boost > result.metrics.stale_boost,
+      `Updated boost (${result.metrics.updated_boost}) should > stale (${result.metrics.stale_boost})`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchFreshness();
+    assert.ok(result.metrics.hypotheses.includes('AB_content_freshness'));
+  });
+});
+
+describe('benchHubNodes [AC] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchHubNodes();
+    assert.equal(result.bench, 'hubnodes');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('hub nodes get boost, leaves do not', () => {
+    const result = benchHubNodes();
+    assert.ok(result.metrics.hub_boost > 0, `Hub boost (${result.metrics.hub_boost}) should be > 0`);
+    assert.equal(result.metrics.leaf_boost, 0, 'Leaf boost should be 0');
+  });
+
+  it('separation improves', () => {
+    const result = benchHubNodes();
+    assert.ok(result.metrics.separation_improvement > 0,
+      `Separation improvement (${result.metrics.separation_improvement}) should be > 0`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchHubNodes();
+    assert.ok(result.metrics.hypotheses.includes('AC_relation_density'));
+  });
+});
+
+describe('benchCoherence [AD] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCoherence();
+    assert.equal(result.bench, 'coherence');
+    assert.ok(!result.error, result.error);
+  });
+
+  it('coherent strategy beats random', () => {
+    const result = benchCoherence();
+    const s = result.metrics.strategies;
+    assert.ok(s.coherent_greedy >= s.random,
+      `Coherent (${s.coherent_greedy}) should >= random (${s.random})`);
+  });
+
+  it('graph-walk has positive coherence', () => {
+    const result = benchCoherence();
+    assert.ok(result.metrics.strategies.graph_walk > 0, 'Graph-walk coherence should be > 0');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchCoherence();
+    assert.ok(result.metrics.hypotheses.includes('AD_context_coherence'));
+  });
+});
+
 describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 15);
+    assert.equal(results.length, 23);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);

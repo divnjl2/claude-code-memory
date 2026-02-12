@@ -236,6 +236,74 @@ function printResult(r) {
       console.log(`  Spaced vs random: +${pct(m.spaced_vs_random)}`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'temporal':
+      console.log(`  Entries: ${m.total_entries}, Clusters: ${m.clusters_found}`);
+      console.log(`  Avg cluster size: ${m.avg_cluster_size}`);
+      console.log(`  Avg coherence: ${m.avg_coherence}`);
+      console.log(`  Cluster hits: ${m.cluster_hits} vs Random: ${m.random_hits} (${m.cluster_advantage}x)`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'inheritance':
+      console.log(`  Hub: ${m.hub_entries}, Connected: ${m.connected_entries}, Isolated: ${m.isolated_entries}`);
+      console.log(`  Connected boost: +${m.connected_boost} fitness`);
+      console.log(`  Isolated boost: +${m.isolated_boost} fitness`);
+      console.log(`  Entries with inheritance: ${m.entries_with_inheritance}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'queryrewrite':
+      console.log(`  Original recall: ${pct(m.original_recall)}  Expanded: ${pct(m.expanded_recall)}`);
+      console.log(`  Improvement: +${pct(m.recall_improvement)}`);
+      if (m.per_query) {
+        for (const q of m.per_query) {
+          console.log(`    "${q.query}": ${q.original_hits}→${q.expanded_hits}/${q.expected} (${pct(q.original_recall)}→${pct(q.expanded_recall)})`);
+        }
+      }
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'capacity':
+      console.log(`  Before: ${m.before_count} → After: ${m.after_count} (cap=${m.capacity_limit})`);
+      console.log(`  Golden retained: ${m.golden_retained} (${pct(m.golden_retention_rate)})`);
+      console.log(`  Noise evicted: ${m.noise_evicted} (${pct(m.noise_eviction_rate)})`);
+      console.log(`  Golden lost: ${m.golden_lost}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'gengap':
+      console.log(`  Avg generation: ${m.avg_generation}`);
+      console.log(`  Veteran boost: +${m.veteran_boost}`);
+      console.log(`  Newcomer boost: +${m.newcomer_boost}`);
+      console.log(`  Separation: standard=${m.separation_standard} → gengap=${m.separation_gengap} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'freshness':
+      console.log(`  Updated: ${m.updated_entries}, Stale: ${m.stale_entries}`);
+      console.log(`  Updated boost: +${m.updated_boost}`);
+      console.log(`  Separation: standard=${m.separation_standard} → fresh=${m.separation_fresh} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'hubnodes':
+      console.log(`  Hubs: ${m.hub_count} (threshold=${m.hub_threshold} relations), Leaves: ${m.leaf_count}`);
+      console.log(`  Hub avg density: ${m.hub_avg_density} relations`);
+      console.log(`  Hub boost: +${m.hub_boost}, Leaf boost: +${m.leaf_boost}`);
+      console.log(`  Separation: standard=${m.separation_standard} → density=${m.separation_density} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'coherence':
+      console.log(`  Best strategy: ${m.best_strategy} (coherence=${m.best_coherence})`);
+      for (const [s, c] of Object.entries(m.strategies)) {
+        console.log(`    ${s.padEnd(18)} coherence=${c}`);
+      }
+      console.log(`  Coherent vs fitness-only: +${m.coherent_vs_fitness}`);
+      console.log(`  Graph-walk vs fitness-only: +${m.graph_vs_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -281,6 +349,14 @@ function printAllResults(results) {
       case 'conflict': console.log(`  [+] conflict: F1=${pct(m.f1)} (${m.true_positives}/${m.known_conflicts} detected)`); break;
       case 'compaction': console.log(`  [+] compaction: ${pct(m.reduction_rate)} reduction, ${pct(m.avg_purity)} purity`); break;
       case 'forgetting': console.log(`  [+] forgetting: best=${m.best_strategy} survival=${pct(m.best_survival_rate)}`); break;
+      case 'temporal': console.log(`  [+] temporal: ${m.cluster_advantage}x cluster advantage, coherence=${m.avg_coherence}`); break;
+      case 'inheritance': console.log(`  [+] inheritance: connected +${m.connected_boost}, isolated +${m.isolated_boost}`); break;
+      case 'queryrewrite': console.log(`  [+] queryrewrite: recall ${pct(m.original_recall)}→${pct(m.expanded_recall)} (+${pct(m.recall_improvement)})`); break;
+      case 'capacity': console.log(`  [+] capacity: ${pct(m.golden_retention_rate)} golden retained, ${pct(m.noise_eviction_rate)} noise evicted`); break;
+      case 'gengap': console.log(`  [+] gengap: veteran +${m.veteran_boost}, separation +${m.separation_improvement}`); break;
+      case 'freshness': console.log(`  [+] freshness: updated +${m.updated_boost}, separation +${m.separation_improvement}`); break;
+      case 'hubnodes': console.log(`  [+] hubnodes: hub +${m.hub_boost}, separation +${m.separation_improvement}`); break;
+      case 'coherence': console.log(`  [+] coherence: best=${m.best_strategy} (${m.best_coherence})`); break;
     }
   }
   console.log('');
