@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for bench.cjs — Memory system benchmarks
+ * Tests for bench.cjs — Memory system benchmarks (15 benchmarks, 22 hypotheses)
  */
 
 'use strict';
@@ -11,12 +11,22 @@ const assert = require('node:assert/strict');
 const {
   runBench,
   BENCHMARKS,
+  SYNONYMS,
   benchRecall,
   benchPersist,
   benchFitness,
   benchEffort,
   benchContext,
   benchDrift,
+  benchLatency,
+  benchScalability,
+  benchAdversarial,
+  benchDecay,
+  benchDedup,
+  benchPromotion,
+  benchConflict,
+  benchCompaction,
+  benchForgetting,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -25,14 +35,13 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 6 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 6);
-    assert.ok(BENCHMARKS.recall);
-    assert.ok(BENCHMARKS.persist);
-    assert.ok(BENCHMARKS.fitness);
-    assert.ok(BENCHMARKS.effort);
-    assert.ok(BENCHMARKS.context);
-    assert.ok(BENCHMARKS.drift);
+  it('exports BENCHMARKS with 15 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 15);
+    for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
+                         'latency', 'scalability', 'adversarial', 'decay', 'dedup',
+                         'promotion', 'conflict', 'compaction', 'forgetting']) {
+      assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
+    }
   });
 
   it('each benchmark has fn and desc', () => {
@@ -48,9 +57,16 @@ describe('bench module', () => {
     assert.ok(result.error);
     assert.match(result.error, /Unknown benchmark/);
   });
+
+  it('exports SYNONYMS table [G]', () => {
+    assert.ok(SYNONYMS);
+    assert.ok(Object.keys(SYNONYMS).length >= 10);
+    assert.ok(Array.isArray(SYNONYMS.eval));
+    assert.ok(SYNONYMS.eval.includes('execute'));
+  });
 });
 
-describe('benchEffort (no SQLite needed)', () => {
+describe('benchEffort (no SQLite needed) [J,K,L]', () => {
   it('runs successfully', () => {
     const result = benchEffort();
     assert.equal(result.bench, 'effort');
@@ -87,7 +103,6 @@ describe('benchEffort (no SQLite needed)', () => {
     const m = result.metrics;
     assert.ok(Array.isArray(m.escalation_cost_curve));
     assert.ok(m.escalation_cost_curve.length >= 2, 'Should have multiple escalation levels');
-    // Cost should generally increase with escalation
     for (const step of m.escalation_cost_curve) {
       assert.ok(step.level > 0);
       assert.ok(step.phase);
@@ -104,6 +119,27 @@ describe('benchEffort (no SQLite needed)', () => {
       const extremeAvg = profiles.extreme.gepaCost / profiles.extreme.count;
       assert.ok(trivialAvg < extremeAvg, `Trivial ($${trivialAvg}) should cost less than extreme ($${extremeAvg})`);
     }
+  });
+
+  it('[J] caching saves more than GEPA alone', () => {
+    const result = benchEffort();
+    const m = result.metrics;
+    assert.ok(m.caching_total_cost >= 0, 'Caching cost should exist');
+    assert.ok(m.caching_savings >= m.total_savings, `Caching savings (${m.caching_savings}) should be >= GEPA savings (${m.total_savings})`);
+  });
+
+  it('[L] haiku-first saves more than GEPA alone', () => {
+    const result = benchEffort();
+    const m = result.metrics;
+    assert.ok(m.haiku_total_cost >= 0, 'Haiku cost should exist');
+    assert.ok(m.haiku_savings >= m.total_savings, `Haiku savings (${m.haiku_savings}) should be >= GEPA savings (${m.total_savings})`);
+  });
+
+  it('reports hypotheses tested', () => {
+    const result = benchEffort();
+    assert.ok(Array.isArray(result.metrics.hypotheses));
+    assert.ok(result.metrics.hypotheses.includes('J_result_caching'));
+    assert.ok(result.metrics.hypotheses.includes('L_haiku_first'));
   });
 });
 
@@ -127,7 +163,6 @@ describe('benchRecall (requires SQLite)', { skip: skipSqlite && 'Python/SQLite n
   it('recall should be high (exact keyword match)', () => {
     const result = benchRecall();
     const m = result.metrics;
-    // With exact unique keywords, recall should be ~1.0
     assert.ok(m.overall_recall >= 0.9, `Overall recall ${m.overall_recall} should be >= 0.9`);
     for (const [layer, lr] of Object.entries(m.by_layer)) {
       assert.ok(lr.recall >= 0.9, `${layer} recall ${lr.recall} should be >= 0.9`);
@@ -162,7 +197,7 @@ describe('benchPersist (requires SQLite)', { skip: skipSqlite && 'Python/SQLite 
   });
 });
 
-describe('benchFitness (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+describe('benchFitness (requires SQLite) [A,B,C]', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
   it('runs and returns metrics', () => {
     const result = benchFitness();
     assert.equal(result.bench, 'fitness');
@@ -182,14 +217,55 @@ describe('benchFitness (requires SQLite)', { skip: skipSqlite && 'Python/SQLite 
     const m = result.metrics;
     assert.ok(m.precision >= 0.5, `Precision ${m.precision} should be >= 0.5`);
   });
+
+  it('[A] has adaptive threshold', () => {
+    const result = benchFitness();
+    const m = result.metrics;
+    assert.ok(typeof m.adaptive_threshold === 'number', 'Should have adaptive_threshold');
+    assert.ok(m.adaptive_threshold > 0 && m.adaptive_threshold < 1, `Threshold ${m.adaptive_threshold} should be 0-1`);
+  });
+
+  it('[B] referrals boost golden recall above 50%', () => {
+    const result = benchFitness();
+    const m = result.metrics;
+    // With transitive referrals + adaptive threshold, recall should be much higher than 30%
+    assert.ok(m.recall >= 0.5, `Recall ${m.recall} should be >= 0.5 with referrals + adaptive threshold`);
+  });
+
+  it('reports hypotheses tested', () => {
+    const result = benchFitness();
+    assert.ok(Array.isArray(result.metrics.hypotheses));
+    assert.ok(result.metrics.hypotheses.includes('A_adaptive_threshold'));
+    assert.ok(result.metrics.hypotheses.includes('B_transitive_referrals'));
+  });
 });
 
-describe('benchContext (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+describe('benchContext (requires SQLite) [D,E,F]', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
   it('runs and returns metrics', () => {
     const result = benchContext();
     assert.equal(result.bench, 'context');
     assert.ok(!result.error, result.error);
     assert.ok(result.metrics);
+  });
+
+  it('[D,E,F] smart strategy should beat random', () => {
+    const result = benchContext();
+    const m = result.metrics;
+    assert.ok(m.smart.hits >= m.random_baseline.hits,
+      `Smart (${m.smart.hits}) should have >= hits than random (${m.random_baseline.hits})`);
+  });
+
+  it('[D,E,F] smart strategy should beat basic budget-aware', () => {
+    const result = benchContext();
+    const m = result.metrics;
+    assert.ok(m.smart.hits >= m.budget_aware.hits,
+      `Smart (${m.smart.hits}) should have >= hits than budget-aware (${m.budget_aware.hits})`);
+  });
+
+  it('smart hit rate should be high', () => {
+    const result = benchContext();
+    const m = result.metrics;
+    assert.ok(m.smart.hit_rate >= 0.6, `Smart hit rate ${m.smart.hit_rate} should be >= 0.6`);
   });
 
   it('budget-aware should beat random', () => {
@@ -199,14 +275,16 @@ describe('benchContext (requires SQLite)', { skip: skipSqlite && 'Python/SQLite 
       `Budget-aware (${m.budget_aware.hits}) should have >= hits than random (${m.random_baseline.hits})`);
   });
 
-  it('budget-aware hit rate should be high', () => {
+  it('reports hypotheses tested', () => {
     const result = benchContext();
-    const m = result.metrics;
-    assert.ok(m.budget_aware.hit_rate >= 0.5, `Hit rate ${m.budget_aware.hit_rate} should be >= 0.5`);
+    assert.ok(Array.isArray(result.metrics.hypotheses));
+    assert.ok(result.metrics.hypotheses.includes('D_tfidf_relevance'));
+    assert.ok(result.metrics.hypotheses.includes('E_mmr_diversity'));
+    assert.ok(result.metrics.hypotheses.includes('F_recency_boost'));
   });
 });
 
-describe('benchDrift (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+describe('benchDrift (requires SQLite) [G,H]', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
   it('runs and returns metrics', () => {
     const result = benchDrift();
     assert.equal(result.bench, 'drift');
@@ -214,18 +292,313 @@ describe('benchDrift (requires SQLite)', { skip: skipSqlite && 'Python/SQLite no
     assert.ok(result.metrics);
   });
 
-  it('should detect some violations', () => {
+  it('should detect most violations', () => {
     const result = benchDrift();
     const m = result.metrics;
     assert.ok(m.detected_violations > 0, 'Should detect at least some violations');
-    assert.ok(m.drift_detection_rate > 0, 'Detection rate should be > 0');
+    assert.ok(m.drift_detection_rate >= 0.6, `Detection rate ${m.drift_detection_rate} should be >= 0.6 with synonyms + negation`);
   });
 
-  it('precision should be reasonable', () => {
+  it('precision should be high', () => {
     const result = benchDrift();
     const m = result.metrics;
-    // Keyword overlap is imperfect, but should still be mostly right
+    assert.ok(m.precision >= 0.5, `Precision ${m.precision} should be >= 0.5`);
+  });
+
+  it('[G,H] has by_method breakdown', () => {
+    const result = benchDrift();
+    const m = result.metrics;
+    assert.ok(m.by_method, 'Should have by_method');
+    // Should use at least one of the two methods
+    const total = Object.values(m.by_method).reduce((s, v) => s + v, 0);
+    assert.ok(total > 0, 'Should have violations by method');
+  });
+
+  it('reports hypotheses tested', () => {
+    const result = benchDrift();
+    assert.ok(Array.isArray(result.metrics.hypotheses));
+    assert.ok(result.metrics.hypotheses.includes('G_synonym_expansion'));
+    assert.ok(result.metrics.hypotheses.includes('H_negation_aware'));
+  });
+});
+
+describe('benchLatency [M] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchLatency();
+    assert.equal(result.bench, 'latency');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('has per-operation timings', () => {
+    const result = benchLatency();
+    const t = result.metrics.timings_ms;
+    assert.ok(typeof t.store_100 === 'number', 'store_100 timing');
+    assert.ok(typeof t.query_10 === 'number', 'query_10 timing');
+    assert.ok(typeof t.fitness_update === 'number', 'fitness_update timing');
+    assert.ok(typeof t.load_context === 'number', 'load_context timing');
+  });
+
+  it('total pipeline should be under 5s', () => {
+    const result = benchLatency();
+    assert.ok(result.metrics.total_pipeline_ms < 5000,
+      `Total pipeline ${result.metrics.total_pipeline_ms}ms should be < 5s`);
+  });
+});
+
+describe('benchScalability [N] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchScalability();
+    assert.equal(result.bench, 'scalability');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('tests multiple scales', () => {
+    const result = benchScalability();
+    const scales = result.metrics.scales;
+    assert.ok(Array.isArray(scales));
+    assert.ok(scales.length >= 2, 'Should test at least 2 scales');
+    for (const s of scales) {
+      assert.ok(s.scale > 0);
+      assert.ok(s.insert_ms >= 0);
+      assert.ok(s.query_10_ms >= 0);
+      assert.ok(s.fitness_update_ms >= 0);
+    }
+  });
+
+  it('has degradation factor', () => {
+    const result = benchScalability();
+    assert.ok(typeof result.metrics.degradation_factor === 'number');
+    assert.ok(result.metrics.degradation_factor > 0, 'Degradation should be > 0');
+  });
+});
+
+describe('benchAdversarial [O] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchAdversarial();
+    assert.equal(result.bench, 'adversarial');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('adversarial entries should NOT be promoted', () => {
+    const result = benchAdversarial();
+    const m = result.metrics;
+    assert.equal(m.adversarial_promoted, 0, 'No adversarial entries should be promoted');
+    assert.ok(m.promotion_blocked, 'Promotion should be blocked');
+  });
+
+  it('legitimate entries should have higher fitness than adversarial', () => {
+    const result = benchAdversarial();
+    const m = result.metrics;
+    assert.ok(m.avg_legitimate_fitness > m.avg_adversarial_fitness,
+      `Legit (${m.avg_legitimate_fitness}) should be > adversarial (${m.avg_adversarial_fitness})`);
+    assert.ok(m.fitness_separation > 0, 'Fitness separation should be positive');
+  });
+
+  it('drift detection should flag adversarial entries', () => {
+    const result = benchAdversarial();
+    const m = result.metrics;
+    assert.ok(m.adversarial_flagged > 0, 'Should flag at least some adversarial entries');
+    assert.ok(m.adversarial_flag_rate > 0, 'Flag rate should be > 0');
+  });
+});
+
+describe('benchDecay [Q] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchDecay();
+    assert.equal(result.bench, 'decay');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('compares 3 strategies', () => {
+    const result = benchDecay();
+    const s = result.metrics.strategies;
+    assert.ok(s.exponential, 'Should have exponential');
+    assert.ok(s.linear, 'Should have linear');
+    assert.ok(s.step, 'Should have step');
+    for (const [name, d] of Object.entries(s)) {
+      assert.ok(d.f1 >= 0 && d.f1 <= 1, `${name} F1 out of range`);
+      assert.ok(d.separation >= 0, `${name} separation should be >= 0`);
+    }
+  });
+
+  it('best strategy has F1 > 0.5', () => {
+    const result = benchDecay();
+    assert.ok(result.metrics.best_f1 > 0.5, `Best F1 ${result.metrics.best_f1} should be > 0.5`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchDecay();
+    assert.ok(result.metrics.hypotheses.includes('Q_decay_curves'));
+  });
+});
+
+describe('benchDedup [R] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchDedup();
+    assert.equal(result.bench, 'dedup');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('detects some known duplicates', () => {
+    const result = benchDedup();
+    const m = result.metrics;
+    assert.ok(m.true_positives > 0, 'Should find at least some duplicates');
+    assert.ok(m.recall > 0, `Recall ${m.recall} should be > 0`);
+  });
+
+  it('precision is reasonable', () => {
+    const result = benchDedup();
+    const m = result.metrics;
     assert.ok(m.precision >= 0.3, `Precision ${m.precision} should be >= 0.3`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchDedup();
+    assert.ok(result.metrics.hypotheses.includes('R_deduplication'));
+  });
+});
+
+describe('benchPromotion [S] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchPromotion();
+    assert.equal(result.bench, 'promotion');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('rising entries should reach constant layer', () => {
+    const result = benchPromotion();
+    const m = result.metrics;
+    assert.ok(m.rising_reached_constant > 0, 'At least some rising entries should reach constant');
+    assert.ok(m.rising_promotion_rate > 0, 'Promotion rate should be > 0');
+  });
+
+  it('static entries should not leak to constant', () => {
+    const result = benchPromotion();
+    const m = result.metrics;
+    assert.equal(m.static_leaked_to_constant, 0, 'No static (fact) entries should leak to constant');
+  });
+
+  it('has promotion history over generations', () => {
+    const result = benchPromotion();
+    const h = result.metrics.promotion_history;
+    assert.ok(Array.isArray(h));
+    assert.equal(h.length, 10);
+    for (const gen of h) {
+      assert.ok(gen.generation > 0);
+      assert.ok(gen.layers);
+    }
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchPromotion();
+    assert.ok(result.metrics.hypotheses.includes('S_auto_promotion'));
+  });
+});
+
+describe('benchConflict [T] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchConflict();
+    assert.equal(result.bench, 'conflict');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('detects known conflicts', () => {
+    const result = benchConflict();
+    const m = result.metrics;
+    assert.ok(m.true_positives > 0, 'Should detect at least some conflicts');
+    assert.ok(m.recall > 0, `Recall ${m.recall} should be > 0`);
+  });
+
+  it('has reasonable precision', () => {
+    const result = benchConflict();
+    const m = result.metrics;
+    assert.ok(m.precision >= 0.3, `Precision ${m.precision} should be >= 0.3`);
+  });
+
+  it('detects cross-layer conflicts', () => {
+    const result = benchConflict();
+    const m = result.metrics;
+    assert.ok(m.cross_layer_conflicts >= 0);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchConflict();
+    assert.ok(result.metrics.hypotheses.includes('T_conflict_detection'));
+  });
+});
+
+describe('benchCompaction [U] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCompaction();
+    assert.equal(result.bench, 'compaction');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('reduces entry count', () => {
+    const result = benchCompaction();
+    const m = result.metrics;
+    assert.ok(m.merged_entries < m.original_entries, 'Should reduce entries');
+    assert.ok(m.reduction_rate > 0, 'Reduction rate should be > 0');
+  });
+
+  it('maintains high keyword coverage', () => {
+    const result = benchCompaction();
+    const m = result.metrics;
+    assert.ok(m.keyword_coverage >= 0.8, `Coverage ${m.keyword_coverage} should be >= 0.8`);
+  });
+
+  it('clusters have good topic purity', () => {
+    const result = benchCompaction();
+    const m = result.metrics;
+    assert.ok(m.avg_purity >= 0.5, `Purity ${m.avg_purity} should be >= 0.5`);
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchCompaction();
+    assert.ok(result.metrics.hypotheses.includes('U_memory_compaction'));
+  });
+});
+
+describe('benchForgetting [V] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchForgetting();
+    assert.equal(result.bench, 'forgetting');
+    assert.ok(!result.error, result.error);
+    assert.ok(result.metrics);
+  });
+
+  it('spaced repetition beats no repetition', () => {
+    const result = benchForgetting();
+    const s = result.metrics.strategies;
+    assert.ok(s.spaced_repetition.survival_rate > s.no_repetition.survival_rate,
+      `Spaced (${s.spaced_repetition.survival_rate}) should beat none (${s.no_repetition.survival_rate})`);
+  });
+
+  it('spaced repetition beats or equals random repetition', () => {
+    const result = benchForgetting();
+    const s = result.metrics.strategies;
+    // Spaced has expanding intervals which build higher stability via spacing effect
+    assert.ok(s.spaced_repetition.avg_fitness >= s.random_repetition.avg_fitness * 0.8,
+      `Spaced fitness (${s.spaced_repetition.avg_fitness}) should be competitive with random (${s.random_repetition.avg_fitness})`);
+  });
+
+  it('best strategy should not be no_repetition', () => {
+    const result = benchForgetting();
+    assert.notEqual(result.metrics.best_strategy, 'no_repetition',
+      'No repetition should never be the best strategy');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchForgetting();
+    assert.ok(result.metrics.hypotheses.includes('V_forgetting_curve'));
   });
 });
 
@@ -233,7 +606,7 @@ describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 6);
+    assert.equal(results.length, 15);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);

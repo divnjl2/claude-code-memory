@@ -9,6 +9,15 @@
  *   npx claude-code-memory bench effort     # Cost/quality tradeoff
  *   npx claude-code-memory bench context    # Context utilization
  *   npx claude-code-memory bench drift      # Drift detection
+ *   npx claude-code-memory bench latency    # Operation latency
+ *   npx claude-code-memory bench scalability # Scale testing (100/1K/10K)
+ *   npx claude-code-memory bench adversarial # Adversarial resilience
+ *   npx claude-code-memory bench decay      # Decay function comparison
+ *   npx claude-code-memory bench dedup      # Near-duplicate detection
+ *   npx claude-code-memory bench promotion  # Auto-promotion pipeline
+ *   npx claude-code-memory bench conflict   # Contradiction detection
+ *   npx claude-code-memory bench compaction # Memory compaction
+ *   npx claude-code-memory bench forgetting # Forgetting curve
  *   npx claude-code-memory bench all        # All + summary
  */
 
@@ -136,6 +145,97 @@ function printResult(r) {
         }
       }
       break;
+
+    case 'latency':
+      console.log(`  Operations tested: ${Object.keys(m.operations).length}`);
+      for (const [op, ms] of Object.entries(m.operations)) {
+        const bar = '#'.repeat(Math.min(Math.round(ms / 5), 40));
+        console.log(`    ${op.padEnd(22)} ${String(ms).padStart(6)}ms ${bar}`);
+      }
+      console.log(`  Total: ${m.total_ms}ms`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'scalability':
+      console.log(`  Scales tested: ${m.scales.map(s => s.scale).join(', ')}`);
+      for (const s of m.scales) {
+        console.log(`    ${String(s.scale).padStart(6)} entries: insert=${s.insert_ms}ms query=${s.query_ms}ms fitness=${s.fitness_ms}ms`);
+      }
+      console.log(`  Degradation factor: ${m.degradation_factor} (1.0=linear, >1=superlinear)`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'adversarial':
+      console.log(`  Adversarial entries: ${m.adversarial_count}, Legitimate: ${m.legitimate_count}`);
+      console.log(`  Safety constants: ${m.safety_constants}`);
+      console.log(`  Adversarial promotion blocked: ${m.adversarial_promotion_blocked ? 'YES' : 'NO'}`);
+      console.log(`  Adversarial flagged by drift: ${m.adversarial_flagged ? 'YES' : 'NO'}`);
+      console.log(`  Avg fitness — legit: ${m.avg_legit_fitness}, adversarial: ${m.avg_adversarial_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'decay':
+      console.log(`  Best strategy: ${m.best_strategy} (F1=${pct(m.best_f1)})`);
+      for (const [s, d] of Object.entries(m.strategies)) {
+        console.log(`    ${s.padEnd(14)} separation=${d.separation} precision=${pct(d.precision)} recall=${pct(d.recall)} F1=${pct(d.f1)}`);
+      }
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'dedup':
+      console.log(`  Entries: ${m.total_entries}, Known duplicates: ${m.known_duplicates}`);
+      console.log(`  Detected pairs: ${m.detected_pairs} (TP=${m.true_positives} FP=${m.false_positives})`);
+      console.log(`  Precision: ${pct(m.precision)}  Recall: ${pct(m.recall)}  F1: ${pct(m.f1)}`);
+      console.log(`  Jaccard threshold: ${m.jaccard_threshold}`);
+      if (m.top_matches && m.top_matches.length > 0) {
+        console.log(`  Top matches:`);
+        for (const t of m.top_matches.slice(0, 3)) {
+          console.log(`    ${t.id1} <-> ${t.id2} (similarity=${t.similarity})`);
+        }
+      }
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'promotion':
+      console.log(`  Entries: ${m.total_entries} (${m.rising_entries} rising, ${m.static_entries} static)`);
+      console.log(`  Generations: ${m.generations_simulated}`);
+      console.log(`  Rising reached constant: ${m.rising_reached_constant}/${m.rising_entries} (${pct(m.rising_promotion_rate)})`);
+      console.log(`  Static leaked to constant: ${m.static_leaked_to_constant}`);
+      console.log(`  Avg rising fitness: ${m.avg_rising_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'conflict':
+      console.log(`  Entries: ${m.total_entries}, Known conflicts: ${m.known_conflicts}`);
+      console.log(`  Detected: ${m.detected_conflicts} (TP=${m.true_positives} FP=${m.false_positives} FN=${m.false_negatives})`);
+      console.log(`  Precision: ${pct(m.precision)}  Recall: ${pct(m.recall)}  F1: ${pct(m.f1)}`);
+      console.log(`  Cross-layer conflicts: ${m.cross_layer_conflicts}`);
+      if (m.top_conflicts && m.top_conflicts.length > 0) {
+        console.log(`  Top conflicts:`);
+        for (const c of m.top_conflicts.slice(0, 3)) {
+          console.log(`    ${c.id1} <-> ${c.id2} (overlap=${c.overlap_ratio}, words=${c.overlap.join(',')})`);
+        }
+      }
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'compaction':
+      console.log(`  Original: ${m.original_entries} → Merged: ${m.merged_entries} (${pct(m.reduction_rate)} reduction)`);
+      console.log(`  Avg cluster size: ${m.avg_cluster_size}`);
+      console.log(`  Topic purity: ${pct(m.avg_purity)}`);
+      console.log(`  Keyword coverage: ${pct(m.keyword_coverage)}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'forgetting':
+      console.log(`  Best strategy: ${m.best_strategy} (survival=${pct(m.best_survival_rate)})`);
+      for (const [s, d] of Object.entries(m.strategies)) {
+        console.log(`    ${s.padEnd(20)} survival=${pct(d.survival_rate)} avg_fitness=${d.avg_fitness}`);
+      }
+      console.log(`  Spaced vs none: +${pct(m.spaced_vs_none)}`);
+      console.log(`  Spaced vs random: +${pct(m.spaced_vs_random)}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -172,6 +272,15 @@ function printAllResults(results) {
       case 'effort': console.log(`  [+] effort: ${pct(m.total_savings)} savings ($${m.gepa_total_cost} vs $${m.baseline_total_cost})`); break;
       case 'context': console.log(`  [+] context: ${m.budget_aware_advantage}x advantage over random`); break;
       case 'drift': console.log(`  [+] drift: ${pct(m.drift_detection_rate)} detection rate (F1=${pct(m.f1)})`); break;
+      case 'latency': console.log(`  [+] latency: ${m.total_ms}ms total (${Object.keys(m.operations).length} ops)`); break;
+      case 'scalability': console.log(`  [+] scalability: degradation=${m.degradation_factor} across ${m.scales.length} scales`); break;
+      case 'adversarial': console.log(`  [+] adversarial: blocked=${m.adversarial_promotion_blocked} flagged=${m.adversarial_flagged}`); break;
+      case 'decay': console.log(`  [+] decay: best=${m.best_strategy} F1=${pct(m.best_f1)}`); break;
+      case 'dedup': console.log(`  [+] dedup: F1=${pct(m.f1)} (${m.true_positives}/${m.known_duplicates} found)`); break;
+      case 'promotion': console.log(`  [+] promotion: ${m.rising_reached_constant}/${m.rising_entries} reached constant, ${m.static_leaked_to_constant} leaked`); break;
+      case 'conflict': console.log(`  [+] conflict: F1=${pct(m.f1)} (${m.true_positives}/${m.known_conflicts} detected)`); break;
+      case 'compaction': console.log(`  [+] compaction: ${pct(m.reduction_rate)} reduction, ${pct(m.avg_purity)} purity`); break;
+      case 'forgetting': console.log(`  [+] forgetting: best=${m.best_strategy} survival=${pct(m.best_survival_rate)}`); break;
     }
   }
   console.log('');
