@@ -105,9 +105,13 @@ function setup(flags) {
     mergeResult = mergeIntoFile(settingsPath, hooks);
     console.log(`   Added: ${mergeResult.added}, Updated: ${mergeResult.updated}`);
   } else {
-    // Count what would change
+    // Count what would change (nested format)
     let totalHooks = 0;
-    for (const arr of Object.values(hooks)) totalHooks += arr.length;
+    for (const groups of Object.values(hooks)) {
+      for (const group of groups) {
+        totalHooks += (group.hooks || []).length;
+      }
+    }
     console.log(`   WOULD merge ${totalHooks} hooks`);
   }
 

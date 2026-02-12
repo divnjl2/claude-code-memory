@@ -28,20 +28,35 @@ const os = require('os');
 function extractSignature(command) {
   if (!command || typeof command !== 'string') return null;
 
+  // Strip trailing `2>/dev/null || true` and similar noise
+  const cleanCmd = command.replace(/\s+2>\/dev\/null.*$/, '').replace(/\s+2>nul.*$/, '').trim();
+
   // Match: node "path/to/script.cjs" subcommand
-  const match = command.match(/node\s+"?([^"]+\.(?:cjs|js|mjs))"?\s+(\S+)/);
+  const match = cleanCmd.match(/node\s+"?([^"]+\.(?:cjs|js|mjs))"?\s+(\S+)/);
   if (match) {
     const script = path.basename(match[1]);
     const subcmd = match[2];
     return `${script}::${subcmd}`;
   }
 
+  // Match: node "path/to/script.cjs" (no subcommand, e.g. inherit-params.cjs)
+  const nodeOnlyMatch = cleanCmd.match(/node\s+"?([^"]+\.(?:cjs|js|mjs))"?\s*$/);
+  if (nodeOnlyMatch) {
+    return `${path.basename(nodeOnlyMatch[1])}::run`;
+  }
+
   // Match: python "path/to/script.py" subcommand
-  const pyMatch = command.match(/python\d?\s+"?([^"]+\.py)"?\s+(\S+)/);
+  const pyMatch = cleanCmd.match(/python\d?\s+"?([^"]+\.py)"?\s+(\S+)/);
   if (pyMatch) {
     const script = path.basename(pyMatch[1]);
     const subcmd = pyMatch[2];
     return `${script}::${subcmd}`;
+  }
+
+  // Match: bash "path/to/script.sh" (no subcommand)
+  const bashMatch = cleanCmd.match(/bash\s+"?([^"]+\.sh)"?/);
+  if (bashMatch) {
+    return `${path.basename(bashMatch[1])}::run`;
   }
 
   return null;
@@ -62,34 +77,82 @@ function isOurHook(command) {
 }
 
 /**
- * Merge new hooks into existing hooks array for a specific event.
- * Does NOT duplicate, does NOT remove foreign hooks.
- *
- * @param {Array} existing - Current hooks array for this event
- * @param {Array} newHooks - New hooks to merge
- * @returns {Array} Merged hooks array
+ * Extract all signatures from a hook group's hooks array.
+ * @param {object} group - { matcher?, hooks: [...] }
+ * @returns {Set<string>}
  */
-function mergeHookArray(existing, newHooks) {
-  if (!existing || !Array.isArray(existing)) existing = [];
-  if (!newHooks || !Array.isArray(newHooks)) return existing;
-
-  // Build signature map of existing hooks
-  const existingSigs = new Map();
-  for (let i = 0; i < existing.length; i++) {
-    const sig = extractSignature(existing[i].command);
-    if (sig) existingSigs.set(sig, i);
+function extractGroupSignatures(group) {
+  const sigs = new Set();
+  if (!group || !group.hooks) return sigs;
+  for (const h of group.hooks) {
+    const sig = extractSignature(h.command);
+    if (sig) sigs.add(sig);
   }
+  return sigs;
+}
 
-  const result = [...existing];
+/**
+ * Merge new hook groups into existing hook groups for a specific event.
+ *
+ * Claude Code settings.json uses nested format:
+ *   [{ matcher: "^(Edit|Write)$", hooks: [{ type, command, timeout, continueOnError }] }]
+ *
+ * For events without matchers (SessionStart, Stop, Notification):
+ *   [{ hooks: [{ type, command, timeout, continueOnError }] }]
+ *
+ * Strategy:
+ *   1. Match groups by `matcher` (or lack thereof)
+ *   2. Within each group, match individual hooks by signature
+ *   3. Update existing, add new, never remove foreign hooks
+ *
+ * @param {Array} existing - Current hook groups for this event
+ * @param {Array} newGroups - New hook groups to merge
+ * @returns {Array} Merged hook groups array
+ */
+function mergeHookArray(existing, newGroups) {
+  if (!existing || !Array.isArray(existing)) existing = [];
+  if (!newGroups || !Array.isArray(newGroups)) return existing;
 
-  for (const newHook of newHooks) {
-    const sig = extractSignature(newHook.command);
-    if (sig && existingSigs.has(sig)) {
-      // Update existing hook in place
-      result[existingSigs.get(sig)] = newHook;
+  const result = JSON.parse(JSON.stringify(existing)); // deep clone
+
+  for (const newGroup of newGroups) {
+    const newMatcher = newGroup.matcher || null;
+
+    // Find matching existing group
+    let matchedGroupIdx = -1;
+    for (let i = 0; i < result.length; i++) {
+      const existingMatcher = result[i].matcher || null;
+      if (newMatcher === existingMatcher) {
+        matchedGroupIdx = i;
+        break;
+      }
+    }
+
+    if (matchedGroupIdx >= 0) {
+      // Merge hooks within the matched group
+      const existingGroup = result[matchedGroupIdx];
+      if (!existingGroup.hooks) existingGroup.hooks = [];
+
+      // Build signature map of existing hooks in this group
+      const existingSigMap = new Map();
+      for (let i = 0; i < existingGroup.hooks.length; i++) {
+        const sig = extractSignature(existingGroup.hooks[i].command);
+        if (sig) existingSigMap.set(sig, i);
+      }
+
+      for (const newHook of (newGroup.hooks || [])) {
+        const sig = extractSignature(newHook.command);
+        if (sig && existingSigMap.has(sig)) {
+          // Update existing hook in place
+          existingGroup.hooks[existingSigMap.get(sig)] = newHook;
+        } else {
+          // Add new hook to this group
+          existingGroup.hooks.push(newHook);
+        }
+      }
     } else {
-      // Add new hook
-      result.push(newHook);
+      // No matching group — add new group
+      result.push(newGroup);
     }
   }
 
@@ -131,18 +194,29 @@ function mergeIntoFile(settingsPath, newHooks) {
     // File doesn't exist or invalid JSON — start fresh
   }
 
-  // Count what changes
+  // Count what changes (nested format)
   let added = 0;
   let updated = 0;
   const existingHooks = existing.hooks || {};
 
-  for (const [event, hooks] of Object.entries(newHooks)) {
-    const currentArr = existingHooks[event] || [];
-    for (const newHook of hooks) {
-      const sig = extractSignature(newHook.command);
-      const existsIdx = currentArr.findIndex(h => extractSignature(h.command) === sig);
-      if (existsIdx >= 0) updated++;
-      else added++;
+  for (const [event, newGroups] of Object.entries(newHooks)) {
+    const currentGroups = existingHooks[event] || [];
+    for (const newGroup of newGroups) {
+      const newMatcher = newGroup.matcher || null;
+      const matchedGroup = currentGroups.find(g => (g.matcher || null) === newMatcher);
+
+      if (matchedGroup && matchedGroup.hooks) {
+        // Count hooks within matched group
+        const existingSigs = new Set(matchedGroup.hooks.map(h => extractSignature(h.command)).filter(Boolean));
+        for (const newHook of (newGroup.hooks || [])) {
+          const sig = extractSignature(newHook.command);
+          if (sig && existingSigs.has(sig)) updated++;
+          else added++;
+        }
+      } else {
+        // Entire group is new
+        added += (newGroup.hooks || []).length;
+      }
     }
   }
 
@@ -162,6 +236,8 @@ function mergeIntoFile(settingsPath, newHooks) {
 
 /**
  * Remove all claude-code-memory hooks from settings.json.
+ * Works with nested format: removes individual hooks from groups,
+ * and removes entire groups if they become empty.
  *
  * @param {string} settingsPath - Path to settings.json
  * @returns {{ success: boolean, removed: number }}
@@ -178,9 +254,29 @@ function removeOurHooks(settingsPath) {
 
   let removed = 0;
   for (const event of Object.keys(settings.hooks)) {
-    const before = settings.hooks[event].length;
-    settings.hooks[event] = settings.hooks[event].filter(h => !isOurHook(h.command));
-    removed += before - settings.hooks[event].length;
+    if (!Array.isArray(settings.hooks[event])) continue;
+
+    for (const group of settings.hooks[event]) {
+      if (group.hooks && Array.isArray(group.hooks)) {
+        // Nested format: filter hooks within each group
+        const before = group.hooks.length;
+        group.hooks = group.hooks.filter(h => !isOurHook(h.command));
+        removed += before - group.hooks.length;
+      } else if (group.command) {
+        // Flat format (legacy): mark for removal at group level
+        if (isOurHook(group.command)) {
+          group._remove = true;
+          removed++;
+        }
+      }
+    }
+
+    // Remove empty groups and flat-format marked groups
+    settings.hooks[event] = settings.hooks[event].filter(g => {
+      if (g._remove) return false;
+      if (g.hooks && g.hooks.length === 0) return false;
+      return true;
+    });
 
     // Clean up empty arrays
     if (settings.hooks[event].length === 0) {
