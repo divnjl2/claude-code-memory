@@ -4744,6 +4744,552 @@ print(json.dumps({
   }
 }
 
+// ─── Bench 32: Entropy-Based Pruning [AM] ───────────────────────────────────
+
+function benchEntropy() {
+  const tmpDir = makeTmpDir('entropy');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'entropy', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    const highInfo = [
+      'HNSW algorithm uses hierarchical navigable small world graphs for approximate nearest neighbor search',
+      'Byzantine fault tolerance requires 3f+1 nodes to withstand f simultaneous failures',
+      'Ebbinghaus forgetting curve models retention as exponential decay with stability parameter',
+      'Pareto frontier identifies non-dominated solutions in multi-objective optimization space',
+      'ConPTY provides pseudoconsole API for modern terminal emulation on Windows platform',
+      'WebSocket protocol enables full-duplex communication channels over single TCP connection',
+      'B-tree index structures maintain sorted data for logarithmic time search operations',
+      'Raft consensus protocol ensures linearizable reads through leader-based replication',
+    ];
+    for (let i = 0; i < highInfo.length; i++) {
+      entries.push({ id: `info-${i}`, content: highInfo[i], node_type: 'pattern', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    }
+    for (let i = 0; i < 20; i++) {
+      entries.push({ id: `generic-${i}`, content: 'thing thing thing data data data code code code update update update', node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re, math
+from collections import Counter
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, importance, access_count FROM nodes").fetchall()
+max_ac = max(r[3] for r in rows) or 1
+db.close()
+
+def content_entropy(text):
+    words = re.findall(r'\\b\\w{3,}\\b', text.lower())
+    if not words: return 0
+    counts = Counter(words)
+    unique_ratio = len(counts) / len(words)  # vocabulary diversity
+    total = len(words)
+    entropy = -sum((c/total) * math.log2(c/total) for c in counts.values())
+    max_entropy = math.log2(total) if total > 1 else 1
+    norm_entropy = entropy / max_entropy if max_entropy > 0 else 0
+    # Combine: high unique ratio + high entropy = informative
+    return round(unique_ratio * 0.7 + norm_entropy * 0.3, 4)
+
+results_standard = {}
+results_entropy = {}
+for nid, content, imp, ac in rows:
+    standard = 0.3 * (ac / max_ac) + 0.3 * imp + 0.2 * 1.0 + 0.2 * min(1.0, ac / 10.0)
+    results_standard[nid] = round(standard, 4)
+    ent = content_entropy(content)
+    ent_modifier = (ent - 0.5) * 0.2
+    results_entropy[nid] = round(standard + ent_modifier, 4)
+
+info_ids = [f'info-{i}' for i in range(8)]
+generic_ids = [f'generic-{i}' for i in range(20)]
+info_std = [results_standard[n] for n in info_ids]
+info_e = [results_entropy[n] for n in info_ids]
+generic_std = [results_standard[n] for n in generic_ids]
+generic_e = [results_entropy[n] for n in generic_ids]
+
+print(json.dumps({
+    'info_boost': round(sum(info_e)/8 - sum(info_std)/8, 4),
+    'generic_penalty': round(sum(generic_e)/20 - sum(generic_std)/20, 4),
+    'separation_standard': round(sum(info_std)/8 - sum(generic_std)/20, 4),
+    'separation_entropy': round(sum(info_e)/8 - sum(generic_e)/20, 4),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'entropy', error: `Entropy benchmark failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'entropy', metrics: {
+      total_entries: 28, info_entries: 8, generic_entries: 20,
+      info_boost: result.info_boost, generic_penalty: result.generic_penalty,
+      separation_standard: result.separation_standard, separation_entropy: result.separation_entropy,
+      separation_improvement: round2(result.separation_entropy - result.separation_standard),
+      hypotheses: ['AM_entropy_pruning'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 33: Access Velocity [AN] ─────────────────────────────────────────
+
+function benchAccessVelocity() {
+  const tmpDir = makeTmpDir('velocity');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'velocity', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 10; i++) {
+      entries.push({ id: `hot-${i}`, content: `Actively used pattern ${i}`, node_type: 'pattern', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 15 + i, age_days: 3 + i });
+    }
+    for (let i = 0; i < 10; i++) {
+      entries.push({ id: `cold-${i}`, content: `Rarely referenced fact ${i}`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 15 + i, age_days: 180 + i * 10 });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, math
+from datetime import datetime
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, importance, access_count, created_at FROM nodes").fetchall()
+max_ac = max(r[2] for r in rows) or 1
+now = datetime.utcnow()
+results_standard = {}
+results_velocity = {}
+for nid, imp, ac, created_str in rows:
+    standard = 0.3 * (ac / max_ac) + 0.3 * imp + 0.2 * 1.0 + 0.2 * min(1.0, ac / 10.0)
+    results_standard[nid] = round(standard, 4)
+    created = datetime.fromisoformat(created_str)
+    age_days = max((now - created).days, 1)
+    velocity = ac / age_days
+    velocity_bonus = min(0.15, math.log2(max(velocity, 0.01) + 1) * 0.08)
+    results_velocity[nid] = round(standard + velocity_bonus, 4)
+db.close()
+hot = [f'hot-{i}' for i in range(10)]
+cold = [f'cold-{i}' for i in range(10)]
+hot_std = [results_standard[n] for n in hot]
+hot_vel = [results_velocity[n] for n in hot]
+cold_std = [results_standard[n] for n in cold]
+cold_vel = [results_velocity[n] for n in cold]
+print(json.dumps({
+    'hot_boost': round(sum(hot_vel)/10 - sum(hot_std)/10, 4),
+    'cold_boost': round(sum(cold_vel)/10 - sum(cold_std)/10, 4),
+    'separation_standard': round(sum(hot_std)/10 - sum(cold_std)/10, 4),
+    'separation_velocity': round(sum(hot_vel)/10 - sum(cold_vel)/10, 4),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'velocity', error: `Velocity benchmark failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'velocity', metrics: {
+      total_entries: 20, hot_entries: 10, cold_entries: 10,
+      hot_boost: result.hot_boost, cold_boost: result.cold_boost,
+      separation_standard: result.separation_standard, separation_velocity: result.separation_velocity,
+      separation_improvement: round2(result.separation_velocity - result.separation_standard),
+      hypotheses: ['AN_access_velocity'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 34: Semantic Clustering for Context [AO] ─────────────────────────
+
+function benchSemanticCluster() {
+  const tmpDir = makeTmpDir('semcluster');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'semcluster', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const topics = {
+      auth: ['auth login token session', 'auth JWT bearer validation', 'auth OAuth redirect callback', 'auth password hash bcrypt salt', 'auth middleware protect route'],
+      perf: ['perf cache redis TTL eviction', 'perf index database query plan', 'perf lazy loading defer render', 'perf CDN static asset compress', 'perf connection pool reuse limit'],
+      test: ['test unit mock assert expect', 'test integration docker compose', 'test e2e cypress selenium wait', 'test coverage threshold branch', 'test fixture factory seed data'],
+    };
+    const entries = [];
+    for (const [topic, contents] of Object.entries(topics)) {
+      for (let i = 0; i < contents.length; i++) {
+        entries.push({ id: `${topic}-${i}`, content: contents[i], node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+      }
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re, random
+random.seed(42)
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content FROM nodes").fetchall()
+db.close()
+def keywords(text):
+    return set(w.lower() for w in re.findall(r'\\b\\w{3,}\\b', text))
+entries = [(r[0], keywords(r[1])) for r in rows]
+def coherence(selected):
+    if len(selected) < 2: return 1.0
+    total_sim = 0; pairs = 0
+    for i in range(len(selected)):
+        for j in range(i+1, len(selected)):
+            union = selected[i][1] | selected[j][1]
+            inter = selected[i][1] & selected[j][1]
+            if union: total_sim += len(inter) / len(union)
+            pairs += 1
+    return round(total_sim / max(pairs, 1), 4)
+BUDGET = 5
+random_sel = random.sample(entries, BUDGET)
+random_coh = coherence(random_sel)
+from collections import defaultdict
+word_to_entries = defaultdict(list)
+for eid, kw in entries:
+    for w in kw: word_to_entries[w].append((eid, kw))
+best_word = max(word_to_entries.keys(), key=lambda w: len(word_to_entries[w]))
+cluster_sel = word_to_entries[best_word][:BUDGET]
+cluster_coh = coherence(cluster_sel)
+query_kw = {'auth'}
+query_matches = [(eid, kw) for eid, kw in entries if query_kw & kw][:BUDGET]
+query_coh = coherence(query_matches) if query_matches else 0
+print(json.dumps({
+    'random_coherence': random_coh,
+    'cluster_coherence': cluster_coh,
+    'query_coherence': query_coh,
+    'cluster_vs_random': round(cluster_coh / max(random_coh, 0.001), 2),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'semcluster', error: `Semantic cluster failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'semcluster', metrics: {
+      total_entries: 15, budget: 5,
+      random_coherence: result.random_coherence, cluster_coherence: result.cluster_coherence,
+      query_coherence: result.query_coherence, cluster_vs_random: result.cluster_vs_random,
+      hypotheses: ['AO_semantic_clustering'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 35: WAL Mode Latency [AP] ────────────────────────────────────────
+
+function benchWalMode() {
+  const tmpDir = makeTmpDir('walmode');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'walmode', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const tmpDir2 = makeTmpDir('walmode2');
+    initMemoryDir(tmpDir2);
+    const dbPath2 = initDb(tmpDir2);
+
+    const script = `
+import sqlite3, json, time
+def bench_writes(db_path, mode_label):
+    db = sqlite3.connect(db_path)
+    if mode_label == 'wal': db.execute("PRAGMA journal_mode=WAL")
+    for i in range(10):
+        db.execute("INSERT OR REPLACE INTO nodes (id,content,node_type,importance) VALUES (?,?,?,?)", (f'warm-{i}',f'warmup {i}','fact',0.5))
+    db.commit()
+    start = time.time()
+    for i in range(200):
+        db.execute("INSERT OR REPLACE INTO nodes (id,content,node_type,importance,access_count,memory_layer,fitness) VALUES (?,?,?,?,?,?,?)",
+            (f'bench-{i}',f'Benchmark entry {i}','fact',0.5,1,'mutating',0.5))
+        if i % 20 == 19: db.commit()
+    db.commit()
+    write_ms = round((time.time() - start) * 1000, 2)
+    start = time.time()
+    for i in range(100):
+        db.execute("SELECT * FROM nodes WHERE content LIKE ?", (f'%{i}%',)).fetchall()
+    read_ms = round((time.time() - start) * 1000, 2)
+    db.close()
+    return {'write_ms': write_ms, 'read_ms': read_ms}
+default_result = bench_writes(${JSON.stringify(dbPath.replace(/\\/g, '/'))}, 'default')
+wal_result = bench_writes(${JSON.stringify(dbPath2.replace(/\\/g, '/'))}, 'wal')
+print(json.dumps({
+    'default_write_ms': default_result['write_ms'], 'default_read_ms': default_result['read_ms'],
+    'wal_write_ms': wal_result['write_ms'], 'wal_read_ms': wal_result['read_ms'],
+    'write_speedup': round(default_result['write_ms'] / max(wal_result['write_ms'], 0.01), 2),
+    'read_speedup': round(default_result['read_ms'] / max(wal_result['read_ms'], 0.01), 2),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'walmode', error: `WAL benchmark failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'walmode', metrics: {
+      writes: 200, reads: 100,
+      default_write_ms: result.default_write_ms, wal_write_ms: result.wal_write_ms, write_speedup: result.write_speedup,
+      default_read_ms: result.default_read_ms, wal_read_ms: result.wal_read_ms, read_speedup: result.read_speedup,
+      hypotheses: ['AP_wal_mode'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 36: Multi-Hop Query [AQ] ─────────────────────────────────────────
+
+function benchMultiHop() {
+  const tmpDir = makeTmpDir('multihop');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'multihop', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const chain = ['auth-core', 'auth-middleware', 'route-handler', 'db-query', 'db-connection'];
+    const entries = [];
+    for (let i = 0; i < chain.length; i++) {
+      entries.push({ id: chain[i], content: `${chain[i]}: component in request pipeline`, node_type: 'pattern', importance: 0.6, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    }
+    for (let i = 0; i < 3; i++) {
+      entries.push({ id: `auth-helper-${i}`, content: `auth helper ${i}: utility`, node_type: 'fact', importance: 0.4, memory_layer: 'mutating', fitness: 0.5, access_count: 3 });
+    }
+    for (let i = 0; i < 10; i++) {
+      entries.push({ id: `unrelated-${i}`, content: `unrelated topic ${i}`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    }
+    insertNodes(dbPath, entries);
+
+    const relations = [];
+    for (let i = 0; i < chain.length - 1; i++) relations.push({ source: chain[i], target: chain[i + 1], type: 'calls' });
+    for (let i = 0; i < 3; i++) relations.push({ source: 'auth-middleware', target: `auth-helper-${i}`, type: 'uses' });
+    insertRelations(dbPath, relations);
+
+    const script = `
+import sqlite3, json
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+start_node = 'auth-core'
+def get_neighbors(nid):
+    return set(r[0] for r in db.execute(
+        "SELECT target_id FROM relations WHERE source_id=? UNION SELECT source_id FROM relations WHERE target_id=?", (nid,nid)).fetchall())
+hop1_ids = get_neighbors(start_node) | {start_node}
+hop2_ids = set(hop1_ids)
+for nid in list(hop1_ids):
+    hop2_ids |= get_neighbors(nid)
+hop3_ids = set(hop2_ids)
+for nid in list(hop2_ids - hop1_ids):
+    hop3_ids |= get_neighbors(nid)
+relevant = {'auth-core','auth-middleware','route-handler','db-query','db-connection','auth-helper-0','auth-helper-1','auth-helper-2'}
+db.close()
+print(json.dumps({
+    'hop1_found': len(hop1_ids), 'hop1_recall': round(len(hop1_ids & relevant)/len(relevant), 3),
+    'hop2_found': len(hop2_ids), 'hop2_recall': round(len(hop2_ids & relevant)/len(relevant), 3),
+    'hop3_found': len(hop3_ids), 'hop3_recall': round(len(hop3_ids & relevant)/len(relevant), 3),
+    'hop2_improvement': round(len(hop2_ids & relevant) / max(len(hop1_ids & relevant), 1), 2),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'multihop', error: `Multi-hop failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'multihop', metrics: {
+      total_entries: 18, relevant_entries: 8,
+      hop1_found: result.hop1_found, hop1_recall: result.hop1_recall,
+      hop2_found: result.hop2_found, hop2_recall: result.hop2_recall,
+      hop3_found: result.hop3_found, hop3_recall: result.hop3_recall,
+      hop2_improvement: result.hop2_improvement,
+      hypotheses: ['AQ_multi_hop_query'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 37: Layer Migration Cost [AR] ────────────────────────────────────
+
+function benchMigrationCost() {
+  const tmpDir = makeTmpDir('migration');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'migration', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 30; i++) {
+      const layer = i < 10 ? 'file' : (i < 20 ? 'mutating' : 'constant');
+      entries.push({ id: `entry-${i}`, content: `Knowledge ${i} in ${layer}`, node_type: i < 15 ? 'fact' : 'pattern', importance: 0.3 + (i % 10) * 0.07, memory_layer: layer, fitness: 0.3 + (i * 0.02), access_count: 1 + (i % 15) });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, importance, access_count, memory_layer, fitness FROM nodes").fetchall()
+max_ac = max(r[2] for r in rows) or 1
+MIGRATION_COSTS = {'file_to_mutating': 0.02, 'mutating_to_constant': 0.10, 'file_to_constant': 0.15}
+PROMOTION_THRESHOLDS = {'file': 0.4, 'mutating': 0.7}
+promotions_naive = []
+promotions_cost = []
+for nid, imp, ac, layer, fitness in rows:
+    f = 0.3*(ac/max_ac)+0.3*imp+0.2*1.0+0.2*min(1.0,ac/10.0)
+    threshold = PROMOTION_THRESHOLDS.get(layer)
+    if threshold and f > threshold: promotions_naive.append(nid)
+    if layer == 'file':
+        cost = MIGRATION_COSTS['file_to_mutating']
+        if threshold and f > threshold + cost: promotions_cost.append(nid)
+    elif layer == 'mutating':
+        cost = MIGRATION_COSTS['mutating_to_constant']
+        if threshold and f > threshold + cost: promotions_cost.append(nid)
+db.close()
+marginal = set(promotions_naive) - set(promotions_cost)
+print(json.dumps({
+    'total_entries': len(rows), 'naive_promotions': len(promotions_naive),
+    'cost_aware_promotions': len(promotions_cost), 'marginal_blocked': len(marginal),
+    'selectivity_improvement': round(1 - len(promotions_cost)/max(len(promotions_naive),1), 3),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'migration', error: `Migration cost failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'migration', metrics: {
+      total_entries: result.total_entries, naive_promotions: result.naive_promotions,
+      cost_aware_promotions: result.cost_aware_promotions, marginal_blocked: result.marginal_blocked,
+      selectivity_improvement: result.selectivity_improvement,
+      hypotheses: ['AR_migration_cost'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 38: Attention Decay [AS] ─────────────────────────────────────────
+
+function benchAttentionDecay() {
+  const tmpDir = makeTmpDir('attention');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'attention', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 10; i++) entries.push({ id: `used-${i}`, content: `Active knowledge ${i}`, node_type: 'pattern', importance: 0.6, memory_layer: 'mutating', fitness: 0.5, access_count: 10 + i });
+    for (let i = 0; i < 10; i++) entries.push({ id: `ignored-${i}`, content: `Ignored fact ${i}`, node_type: 'fact', importance: 0.6, memory_layer: 'mutating', fitness: 0.5, access_count: 2 });
+    for (let i = 0; i < 10; i++) entries.push({ id: `unseen-${i}`, content: `Unseen entry ${i}`, node_type: 'fact', importance: 0.6, memory_layer: 'mutating', fitness: 0.5, access_count: 2 });
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, importance, access_count FROM nodes").fetchall()
+max_ac = max(r[2] for r in rows) or 1
+db.close()
+load_counts = {}
+for r in rows:
+    nid = r[0]
+    if nid.startswith('used-'): load_counts[nid] = 5
+    elif nid.startswith('ignored-'): load_counts[nid] = 5
+    else: load_counts[nid] = 0
+results_standard = {}; results_attention = {}
+for nid, imp, ac in rows:
+    standard = 0.3*(ac/max_ac)+0.3*imp+0.2*1.0+0.2*min(1.0,ac/10.0)
+    results_standard[nid] = round(standard, 4)
+    loads = load_counts.get(nid, 0)
+    if loads > 0:
+        use_ratio = ac / (loads * 3)
+        attention_penalty = -0.1 if use_ratio < 0.3 else 0.05
+    else: attention_penalty = 0
+    results_attention[nid] = round(standard + attention_penalty, 4)
+used=[f'used-{i}' for i in range(10)]; ignored=[f'ignored-{i}' for i in range(10)]
+used_std=[results_standard[n] for n in used]; used_att=[results_attention[n] for n in used]
+ignored_std=[results_standard[n] for n in ignored]; ignored_att=[results_attention[n] for n in ignored]
+print(json.dumps({
+    'used_boost': round(sum(used_att)/10-sum(used_std)/10, 4),
+    'ignored_penalty': round(sum(ignored_att)/10-sum(ignored_std)/10, 4),
+    'separation_standard': round(sum(used_std)/10-sum(ignored_std)/10, 4),
+    'separation_attention': round(sum(used_att)/10-sum(ignored_att)/10, 4),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'attention', error: `Attention decay failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'attention', metrics: {
+      total_entries: 30, used_boost: result.used_boost, ignored_penalty: result.ignored_penalty,
+      separation_standard: result.separation_standard, separation_attention: result.separation_attention,
+      separation_improvement: round2(result.separation_attention - result.separation_standard),
+      hypotheses: ['AS_attention_decay'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Bench 39: Content Length Scoring [AT] ───────────────────────────────────
+
+function benchContentLength() {
+  const tmpDir = makeTmpDir('contentlen');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'contentlen', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 8; i++) entries.push({ id: `short-${i}`, content: `fix bug ${i}`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    for (let i = 0; i < 10; i++) entries.push({ id: `optimal-${i}`, content: 'Use connection pooling with max 20 connections for PostgreSQL database. Set idle timeout to 30 seconds to prevent stale connections.', node_type: 'pattern', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    for (let i = 0; i < 8; i++) entries.push({ id: `long-${i}`, content: 'x '.repeat(300) + `entry ${i}`, node_type: 'fact', importance: 0.5, memory_layer: 'mutating', fitness: 0.5, access_count: 5 });
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, importance, access_count FROM nodes").fetchall()
+max_ac = max(r[3] for r in rows) or 1
+db.close()
+results_standard = {}; results_length = {}
+for nid, content, imp, ac in rows:
+    standard = 0.3*(ac/max_ac)+0.3*imp+0.2*1.0+0.2*min(1.0,ac/10.0)
+    results_standard[nid] = round(standard, 4)
+    clen = len(content)
+    if 50 <= clen <= 200: length_mod = 0.08
+    elif clen < 20: length_mod = -0.1
+    elif clen > 500: length_mod = -0.06
+    else: length_mod = 0
+    results_length[nid] = round(standard + length_mod, 4)
+short=[f'short-{i}' for i in range(8)]; optimal=[f'optimal-{i}' for i in range(10)]; long_ids=[f'long-{i}' for i in range(8)]
+short_std=[results_standard[n] for n in short]; short_len=[results_length[n] for n in short]
+optimal_std=[results_standard[n] for n in optimal]; optimal_len=[results_length[n] for n in optimal]
+long_std=[results_standard[n] for n in long_ids]; long_len=[results_length[n] for n in long_ids]
+print(json.dumps({
+    'short_penalty': round(sum(short_len)/8-sum(short_std)/8, 4),
+    'optimal_boost': round(sum(optimal_len)/10-sum(optimal_std)/10, 4),
+    'long_penalty': round(sum(long_len)/8-sum(long_std)/8, 4),
+    'optimal_vs_short_standard': round(sum(optimal_std)/10-sum(short_std)/8, 4),
+    'optimal_vs_short_length': round(sum(optimal_len)/10-sum(short_len)/8, 4),
+}))
+`;
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      result = JSON.parse(out);
+    } catch (e) { return { bench: 'contentlen', error: `Content length failed: ${e.message}`, duration_ms: Date.now() - start }; }
+
+    return { bench: 'contentlen', metrics: {
+      total_entries: 26, short_entries: 8, optimal_entries: 10, long_entries: 8,
+      short_penalty: result.short_penalty, optimal_boost: result.optimal_boost, long_penalty: result.long_penalty,
+      optimal_vs_short_improvement: round2(result.optimal_vs_short_length - result.optimal_vs_short_standard),
+      hypotheses: ['AT_content_length'],
+    }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
 // ─── Runner ─────────────────────────────────────────────────────────────────
 
 const BENCHMARKS = {
@@ -4778,6 +5324,14 @@ const BENCHMARKS = {
   fragmentation:{ fn: benchFragmentation, desc: 'Memory graph fragmentation [AJ]' },
   cascade:     { fn: benchCascadeDeprecation, desc: 'Cascading deprecation [AK]' },
   recrel:      { fn: benchRecencyRelations, desc: 'Recency-weighted relations [AL]' },
+  entropy:     { fn: benchEntropy,     desc: 'Entropy-based pruning [AM]' },
+  velocity:    { fn: benchAccessVelocity, desc: 'Access velocity scoring [AN]' },
+  semcluster:  { fn: benchSemanticCluster, desc: 'Semantic clustering for context [AO]' },
+  walmode:     { fn: benchWalMode,     desc: 'WAL mode latency comparison [AP]' },
+  multihop:    { fn: benchMultiHop,    desc: 'Multi-hop graph query [AQ]' },
+  migration:   { fn: benchMigrationCost, desc: 'Layer migration cost [AR]' },
+  attention:   { fn: benchAttentionDecay, desc: 'Attention decay scoring [AS]' },
+  contentlen:  { fn: benchContentLength, desc: 'Content length scoring [AT]' },
 };
 
 /**
@@ -4844,4 +5398,12 @@ module.exports = {
   benchFragmentation,
   benchCascadeDeprecation,
   benchRecencyRelations,
+  benchEntropy,
+  benchAccessVelocity,
+  benchSemanticCluster,
+  benchWalMode,
+  benchMultiHop,
+  benchMigrationCost,
+  benchAttentionDecay,
+  benchContentLength,
 };

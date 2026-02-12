@@ -366,6 +366,64 @@ function printResult(r) {
       console.log(`  Recent boost: +${m.recent_boost}, Old penalty: ${m.old_penalty}`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'entropy':
+      console.log(`  Info: ${m.info_entries}, Generic: ${m.generic_entries}`);
+      console.log(`  Info boost: +${m.info_boost}, Generic penalty: ${m.generic_penalty}`);
+      console.log(`  Separation: standard=${m.separation_standard} → entropy=${m.separation_entropy} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'velocity':
+      console.log(`  Hot: ${m.hot_entries}, Cold: ${m.cold_entries}`);
+      console.log(`  Hot boost: +${m.hot_boost}, Cold boost: +${m.cold_boost}`);
+      console.log(`  Separation: standard=${m.separation_standard} → velocity=${m.separation_velocity} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'semcluster':
+      console.log(`  Entries: ${m.total_entries}, Budget: ${m.budget}`);
+      console.log(`  Random: ${m.random_coherence}, Cluster: ${m.cluster_coherence}, Query: ${m.query_coherence}`);
+      console.log(`  Cluster vs random: ${m.cluster_vs_random}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'walmode':
+      console.log(`  Writes: ${m.writes}, Reads: ${m.reads}`);
+      console.log(`  Default: write=${m.default_write_ms}ms read=${m.default_read_ms}ms`);
+      console.log(`  WAL:     write=${m.wal_write_ms}ms read=${m.wal_read_ms}ms`);
+      console.log(`  Speedup: write=${m.write_speedup}x read=${m.read_speedup}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'multihop':
+      console.log(`  Entries: ${m.total_entries}, Relevant: ${m.relevant_entries}`);
+      console.log(`  1-hop: ${m.hop1_found} found (recall=${pct(m.hop1_recall)})`);
+      console.log(`  2-hop: ${m.hop2_found} found (recall=${pct(m.hop2_recall)})`);
+      console.log(`  3-hop: ${m.hop3_found} found (recall=${pct(m.hop3_recall)})`);
+      console.log(`  2-hop improvement: ${m.hop2_improvement}x`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'migration':
+      console.log(`  Naive promotions: ${m.naive_promotions}, Cost-aware: ${m.cost_aware_promotions}`);
+      console.log(`  Marginal blocked: ${m.marginal_blocked}`);
+      console.log(`  Selectivity improvement: ${pct(m.selectivity_improvement)}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'attention':
+      console.log(`  Used boost: +${m.used_boost}, Ignored penalty: ${m.ignored_penalty}`);
+      console.log(`  Separation: standard=${m.separation_standard} → attention=${m.separation_attention} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'contentlen':
+      console.log(`  Short: ${m.short_entries}, Optimal: ${m.optimal_entries}, Long: ${m.long_entries}`);
+      console.log(`  Short penalty: ${m.short_penalty}, Optimal boost: +${m.optimal_boost}, Long penalty: ${m.long_penalty}`);
+      console.log(`  Optimal vs short improvement: +${m.optimal_vs_short_improvement}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -427,6 +485,14 @@ function printAllResults(results) {
       case 'fragmentation': console.log(`  [+] fragmentation: score=${m.fragmentation_score}→${m.post_defrag_fragmentation}`); break;
       case 'cascade': console.log(`  [+] cascade: dep loss=-${m.dependent_fitness_loss}, precision=${pct(m.targeted_precision)}`); break;
       case 'recrel': console.log(`  [+] recrel: separation +${m.separation_improvement} with recency weighting`); break;
+      case 'entropy': console.log(`  [+] entropy: info +${m.info_boost}, generic ${m.generic_penalty}, separation +${m.separation_improvement}`); break;
+      case 'velocity': console.log(`  [+] velocity: hot +${m.hot_boost}, separation +${m.separation_improvement}`); break;
+      case 'semcluster': console.log(`  [+] semcluster: cluster ${m.cluster_vs_random}x vs random`); break;
+      case 'walmode': console.log(`  [+] walmode: write ${m.write_speedup}x, read ${m.read_speedup}x`); break;
+      case 'multihop': console.log(`  [+] multihop: 1-hop ${pct(m.hop1_recall)} → 2-hop ${pct(m.hop2_recall)} (${m.hop2_improvement}x)`); break;
+      case 'migration': console.log(`  [+] migration: ${m.marginal_blocked} blocked, selectivity +${pct(m.selectivity_improvement)}`); break;
+      case 'attention': console.log(`  [+] attention: used +${m.used_boost}, ignored ${m.ignored_penalty}, separation +${m.separation_improvement}`); break;
+      case 'contentlen': console.log(`  [+] contentlen: optimal +${m.optimal_boost}, short ${m.short_penalty}, long ${m.long_penalty}`); break;
     }
   }
   console.log('');

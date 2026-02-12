@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for bench.cjs — Memory system benchmarks (31 benchmarks, 35 hypotheses)
+ * Tests for bench.cjs — Memory system benchmarks (39 benchmarks, 43 hypotheses)
  */
 
 'use strict';
@@ -43,6 +43,14 @@ const {
   benchFragmentation,
   benchCascadeDeprecation,
   benchRecencyRelations,
+  benchEntropy,
+  benchAccessVelocity,
+  benchSemanticCluster,
+  benchWalMode,
+  benchMultiHop,
+  benchMigrationCost,
+  benchAttentionDecay,
+  benchContentLength,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -51,15 +59,17 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 31 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 31);
+  it('exports BENCHMARKS with 39 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 39);
     for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
                          'latency', 'scalability', 'adversarial', 'decay', 'dedup',
                          'promotion', 'conflict', 'compaction', 'forgetting',
                          'temporal', 'inheritance', 'queryrewrite', 'capacity',
                          'gengap', 'freshness', 'hubnodes', 'coherence',
                          'crosslayer', 'coaccess', 'kwdensity', 'batchinc',
-                         'coldstart', 'fragmentation', 'cascade', 'recrel']) {
+                         'coldstart', 'fragmentation', 'cascade', 'recrel',
+                         'entropy', 'velocity', 'semcluster', 'walmode',
+                         'multihop', 'migration', 'attention', 'contentlen']) {
       assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
     }
   });
@@ -971,11 +981,144 @@ describe('benchRecencyRelations [AL] (requires SQLite)', { skip: skipSqlite && '
   });
 });
 
+// ─── Round 5: Hypotheses AM-AT ──────────────────────────────────────────────
+
+describe('benchEntropy [AM] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchEntropy();
+    assert.equal(result.bench, 'entropy');
+    assert.ok(result.metrics);
+  });
+  it('info entries get higher boost than generic', () => {
+    const result = benchEntropy();
+    assert.ok(result.metrics.info_boost > result.metrics.generic_penalty, 'High-entropy content should score higher');
+  });
+  it('reports hypotheses', () => {
+    const result = benchEntropy();
+    assert.ok(result.metrics.hypotheses.includes('AM_entropy_pruning'));
+  });
+});
+
+describe('benchAccessVelocity [AN] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchAccessVelocity();
+    assert.equal(result.bench, 'velocity');
+    assert.ok(result.metrics);
+  });
+  it('hot entries get higher boost than cold', () => {
+    const result = benchAccessVelocity();
+    assert.ok(result.metrics.hot_boost > result.metrics.cold_boost, 'High velocity should score higher');
+  });
+  it('reports hypotheses', () => {
+    const result = benchAccessVelocity();
+    assert.ok(result.metrics.hypotheses.includes('AN_access_velocity'));
+  });
+});
+
+describe('benchSemanticCluster [AO] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchSemanticCluster();
+    assert.equal(result.bench, 'semcluster');
+    assert.ok(result.metrics);
+  });
+  it('cluster coherence beats random', () => {
+    const result = benchSemanticCluster();
+    assert.ok(result.metrics.cluster_vs_random >= 1.0, 'Cluster should be at least as coherent as random');
+  });
+  it('reports hypotheses', () => {
+    const result = benchSemanticCluster();
+    assert.ok(result.metrics.hypotheses.includes('AO_semantic_clustering'));
+  });
+});
+
+describe('benchWalMode [AP] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchWalMode();
+    assert.equal(result.bench, 'walmode');
+    assert.ok(result.metrics);
+  });
+  it('WAL write time is measured', () => {
+    const result = benchWalMode();
+    assert.ok(result.metrics.wal_write_ms > 0, 'WAL write should be measurable');
+  });
+  it('reports hypotheses', () => {
+    const result = benchWalMode();
+    assert.ok(result.metrics.hypotheses.includes('AP_wal_mode'));
+  });
+});
+
+describe('benchMultiHop [AQ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchMultiHop();
+    assert.equal(result.bench, 'multihop');
+    assert.ok(result.metrics);
+  });
+  it('2-hop recall >= 1-hop recall', () => {
+    const result = benchMultiHop();
+    assert.ok(result.metrics.hop2_recall >= result.metrics.hop1_recall, '2-hop should find more');
+  });
+  it('reports hypotheses', () => {
+    const result = benchMultiHop();
+    assert.ok(result.metrics.hypotheses.includes('AQ_multi_hop_query'));
+  });
+});
+
+describe('benchMigrationCost [AR] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchMigrationCost();
+    assert.equal(result.bench, 'migration');
+    assert.ok(result.metrics);
+  });
+  it('cost-aware blocks some marginal promotions', () => {
+    const result = benchMigrationCost();
+    assert.ok(result.metrics.cost_aware_promotions <= result.metrics.naive_promotions, 'Cost-aware should be more selective');
+  });
+  it('reports hypotheses', () => {
+    const result = benchMigrationCost();
+    assert.ok(result.metrics.hypotheses.includes('AR_migration_cost'));
+  });
+});
+
+describe('benchAttentionDecay [AS] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchAttentionDecay();
+    assert.equal(result.bench, 'attention');
+    assert.ok(result.metrics);
+  });
+  it('used entries get boost, ignored get penalty', () => {
+    const result = benchAttentionDecay();
+    assert.ok(result.metrics.used_boost > 0, 'Used should get positive boost');
+    assert.ok(result.metrics.ignored_penalty < 0, 'Ignored should get negative penalty');
+  });
+  it('reports hypotheses', () => {
+    const result = benchAttentionDecay();
+    assert.ok(result.metrics.hypotheses.includes('AS_attention_decay'));
+  });
+});
+
+describe('benchContentLength [AT] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchContentLength();
+    assert.equal(result.bench, 'contentlen');
+    assert.ok(result.metrics);
+  });
+  it('optimal length gets boost, short/long get penalty', () => {
+    const result = benchContentLength();
+    assert.ok(result.metrics.optimal_boost > 0, 'Optimal length should get boost');
+    assert.ok(result.metrics.short_penalty < 0, 'Short should get penalty');
+    assert.ok(result.metrics.long_penalty < 0, 'Long should get penalty');
+  });
+  it('reports hypotheses', () => {
+    const result = benchContentLength();
+    assert.ok(result.metrics.hypotheses.includes('AT_content_length'));
+  });
+});
+
 describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 31);
+    assert.equal(results.length, 39);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);
