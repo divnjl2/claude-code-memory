@@ -1,6 +1,6 @@
 {
   "name": "claude-code-memory",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "4-layer persistent memory system for Claude Code with GEPA v2.1 evolutionary paradigm, encrypted storage, auto-cleanup, and cross-session context",
   "bin": {
     "claude-code-memory": "./bin/cli.cjs"
