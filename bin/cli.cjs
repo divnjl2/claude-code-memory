@@ -42,6 +42,7 @@ Commands:
   cleanup    Manual cleanup by importance/age
   backup     Encrypted export of all memory
   uninstall  Clean removal of hooks and files
+  gepa       GEPA v2.1 memory paradigm (enable|disable|status|reflect|...)
 
 Options:
   --help, -h       Show this help
@@ -77,7 +78,26 @@ const commands = {
   cleanup: '../src/commands/cleanup.cjs',
   backup: '../src/commands/backup.cjs',
   uninstall: '../src/commands/uninstall.cjs',
+  gepa: '../src/commands/gepa.cjs',
 };
+
+// GEPA subcommand parsing: `gepa enable`, `gepa promote <id>`, etc.
+if (command === 'gepa') {
+  const gepaSubIdx = args.indexOf('gepa');
+  const gepaSub = args[gepaSubIdx + 1] || '';
+  const gepaArg = args[gepaSubIdx + 2] || '';
+  if (gepaSub && !gepaSub.startsWith('--')) {
+    flags._sub = gepaSub;
+    if (gepaArg && !gepaArg.startsWith('--')) {
+      flags._arg = gepaArg;
+    }
+    // Handle 4th arg for `gepa effort assess --score X` etc.
+    const gepaArg2 = args[gepaSubIdx + 3] || '';
+    if (gepaArg2 && !gepaArg2.startsWith('--')) {
+      flags._arg2 = gepaArg2;
+    }
+  }
+}
 
 const commandPath = commands[command];
 if (!commandPath) {

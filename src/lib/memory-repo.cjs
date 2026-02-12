@@ -26,6 +26,24 @@ const DEFAULT_CONFIG = {
   autoCommit: true,
   autoPush: false, // Push to remote after auto-commit at session-end
   autoCleanupThreshold: 0.8, // 80% of maxSizeMB triggers auto-cleanup
+  gepa: {
+    enabled: false,
+    quarantineCycles: 20,
+    minFitnessForPromotion: 0.8,
+    diversityQuota: 3,
+    rateLimits: {
+      user: { max: 5, window: 'day' },
+      promotion: { max: 2, window: 'cycle' },
+      verifier: { max: 1, window: '10cycles' },
+      calibration: { max: 1, window: 'cycle' },
+    },
+    contextBudget: {
+      constant: 4000,
+      mutating: 3000,
+      file: 2000,
+      total: 10000,
+    },
+  },
 };
 
 /**

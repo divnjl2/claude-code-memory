@@ -19,6 +19,7 @@ const { getMemoryDir, getMemoryDbPath, getBridgeDir } = require('../lib/path-res
 const { initMemoryRepo, getConfig } = require('../lib/memory-repo.cjs');
 const { detectPython } = require('../lib/python-detector.cjs');
 const { isEncryptionEnabled } = require('../lib/crypto.cjs');
+const { isEnabled: isGepaEnabled, migrateSchema: migrateGepa, getGepaDir } = require('../lib/gepa-core.cjs');
 
 function init(flags) {
   const projectRoot = process.cwd();
@@ -182,7 +183,29 @@ print("OK")
     }
   }
 
-  // Step 5: Remote setup
+  // Step 5: GEPA migration (if enabled)
+  const gepaEnabled = isGepaEnabled(projectRoot);
+  if (gepaEnabled) {
+    console.log('\n5. Running GEPA schema migration...');
+    const migration = migrateGepa(projectRoot);
+    if (migration.success) {
+      console.log(`   Schema version: ${migration.version}`);
+      console.log(`   Migrations: ${migration.migrations.join(', ') || 'none needed'}`);
+
+      // Ensure GEPA workspace dirs
+      const gepaDir = getGepaDir(projectRoot);
+      try { fs.mkdirSync(path.join(gepaDir, 'constant'), { recursive: true }); } catch { /* ok */ }
+      try { fs.mkdirSync(path.join(gepaDir, 'traces'), { recursive: true }); } catch { /* ok */ }
+      try { fs.mkdirSync(path.join(gepaDir, 'archive'), { recursive: true }); } catch { /* ok */ }
+      console.log('   Workspace: OK');
+    } else {
+      console.log(`   Migration: SKIPPED (${migration.error})`);
+    }
+  } else {
+    console.log('\n5. GEPA: disabled (enable with `npx claude-code-memory gepa enable`)');
+  }
+
+  // Step 6: Remote setup
   if (remote) {
     console.log(`\n5. Remote: ${remote}`);
     const { setupRemote } = require('../lib/memory-repo.cjs');
@@ -190,7 +213,7 @@ print("OK")
     console.log(`   ${ok ? 'OK' : 'FAILED'}`);
   }
 
-  // Step 6: Config
+  // Step 7: Config
   const config = getConfig(projectRoot);
   console.log('\nConfiguration:');
   console.log(`  Max size: ${config.maxSizeMB} MB`);

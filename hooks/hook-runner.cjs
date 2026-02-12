@@ -585,6 +585,145 @@ const handlers = {
       process.stdout.write(JSON.stringify(hookMetrics) + '\n');
     }
   },
+
+  // ── GEPA Subcommands ─────────────────────────────────────────────────────
+
+  'gepa-store'(flags) {
+    const key = flags.key || `gepa-${Date.now().toString(36)}`;
+    const value = flags.value || '';
+    const nodeType = flags.type || 'fact';
+    const importance = flags.importance || '0.5';
+    const layer = flags.layer || '';
+
+    if (!value) return;
+
+    incrementMetric(path.join(METRICS_DIR, 'hooks.json'), 'gepaStore');
+
+    const memoryCli = findMemoryCli();
+    if (!memoryCli) return;
+
+    try {
+      const { execFileSync } = require('child_process');
+      const python = process.env.PYTHON_CMD || 'python';
+      const args = [memoryCli, 'gepa-store', key, value, '--type', nodeType, '--importance', importance];
+      if (layer) args.push('--layer', layer);
+      args.push('--fast');
+      const result = execFileSync(python, args, {
+        cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      if (result) process.stdout.write(result + '\n');
+    } catch { /* GEPA store failed gracefully */ }
+  },
+
+  'gepa-query'(flags) {
+    const query = flags.query || '';
+    const layer = flags.layer || '';
+    const limit = flags.limit || '5';
+
+    incrementMetric(path.join(METRICS_DIR, 'hooks.json'), 'gepaQuery');
+
+    const memoryCli = findMemoryCli();
+    if (!memoryCli) return;
+
+    try {
+      const { execFileSync } = require('child_process');
+      const python = process.env.PYTHON_CMD || 'python';
+      const args = [memoryCli, 'gepa-query', query, '--limit', limit];
+      if (layer) args.push('--layer', layer);
+      args.push('--fast');
+      const result = execFileSync(python, args, {
+        cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      if (result) process.stdout.write(result + '\n');
+    } catch { /* GEPA query failed gracefully */ }
+  },
+
+  'gepa-cycle'(flags) {
+    incrementMetric(path.join(METRICS_DIR, 'hooks.json'), 'gepaCycle');
+
+    // Increment cycle in state.json
+    const gepaDir = path.join(MEMORY_DIR, 'gepa');
+    ensureDir(gepaDir);
+    const stateFile = path.join(gepaDir, 'state.json');
+    const state = readJSON(stateFile) || { cycle: 0 };
+    state.cycle = (state.cycle || 0) + 1;
+    state.updatedAt = now();
+    writeJSON(stateFile, state);
+
+    // Reset cycle-based rate limits
+    const rateLimitFile = path.join(gepaDir, 'rate-limits.json');
+    const limits = readJSON(rateLimitFile) || {};
+    for (const type of ['promotion', 'calibration']) {
+      if (limits[type]) {
+        limits[type].count = 0;
+        limits[type].windowStart = now();
+      }
+    }
+    writeJSON(rateLimitFile, limits);
+
+    process.stdout.write(`[gepa-cycle] Cycle ${state.cycle}\n`);
+  },
+
+  'gepa-effort'(flags) {
+    incrementMetric(path.join(METRICS_DIR, 'hooks.json'), 'gepaEffort');
+
+    const action = flags.action || 'status';
+    const effortDir = path.join(MEMORY_DIR, 'gepa');
+    ensureDir(effortDir);
+    const stateFile = path.join(effortDir, 'effort-state.json');
+
+    if (action === 'status') {
+      const state = readJSON(stateFile);
+      if (state && state.nodeStates) {
+        const nodes = Object.entries(state.nodeStates).map(([n, s]) =>
+          `${n}:${s.reasoning_effort}/${s.model_tier}`
+        ).join(' ');
+        process.stdout.write(`[effort] level=${state.escalationLevel || 0} ${nodes}\n`);
+      } else {
+        process.stdout.write('[effort] no active task\n');
+      }
+    } else if (action === 'report') {
+      const state = readJSON(stateFile);
+      if (state) {
+        process.stdout.write(JSON.stringify({
+          taskId: state.taskId,
+          escalationLevel: state.escalationLevel || 0,
+          failures: (state.failureTraces || []).length,
+          changes: (state.effortHistory || []).length,
+        }) + '\n');
+      }
+    }
+  },
+
+  'gepa-signal'(flags) {
+    incrementMetric(path.join(METRICS_DIR, 'hooks.json'), 'gepaSignal');
+
+    const node = flags.node || '';
+    const signal = flags.signal || '';
+    if (!node || !signal) return;
+
+    // Log the signal for offline analysis
+    appendLog(path.join(MEMORY_DIR, 'gepa', 'signals.log'),
+      `${now()} ${node} ${signal}`);
+
+    process.stdout.write(`[gepa-signal] ${node} ← ${signal}\n`);
+  },
+
+  'gepa-reflect'(flags) {
+    incrementMetric(path.join(METRICS_DIR, 'hooks.json'), 'gepaReflect');
+
+    const memoryCli = findMemoryCli();
+    if (!memoryCli) return;
+
+    try {
+      const { execFileSync } = require('child_process');
+      const python = process.env.PYTHON_CMD || 'python';
+      const result = execFileSync(python, [memoryCli, 'reflect', '--fast'], {
+        cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      if (result) process.stdout.write(result + '\n');
+    } catch { /* reflect failed gracefully */ }
+  },
 };
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -602,7 +741,8 @@ function main() {
       '',
       'Commands: pre-edit, post-edit, pre-command, post-command,',
       '  pre-task, post-task, route, session-start, session-end,',
-      '  statusline, metrics, inherit-params, memory-init, bootstrap',
+      '  statusline, metrics, inherit-params, memory-init, bootstrap,',
+      '  gepa-store, gepa-query, gepa-cycle, gepa-effort, gepa-signal',
       '',
     ].join('\n'));
     return;

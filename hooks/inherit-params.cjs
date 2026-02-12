@@ -31,6 +31,15 @@ MEMORY SYSTEM (claude-code-memory):
 - 4 layers: planning-with-files + MCP bridge + auto-memory + GraphMemory SQLite
 - Bridge: node hooks/memory-bridge.cjs (syncs between all 4 layers)
 - Encryption: AES-256-GCM via CLAUDE_MEMORY_KEY env var (optional)
+- GEPA v2.1: 3-layer paradigm (Constant + Mutating + File) with fitness-based promotion
+  - Constant = proven patterns (protected), Mutating = evolving knowledge, File = workspace
+  - Reflection engine: alignment checks, drift detection, promotion via quarantine
+  - Effort Controller: dynamic reasoning_effort/temperature/model_tier per node (L1/L2/L3)
+    - Top-Down: complexity score → effort propagation to all nodes
+    - Bottom-Up: failure escalation (4 levels: L3 retry → L2 re-mutate → L1 re-plan → circuit break)
+    - Mid-Execution signals: struggling, confident, novel_territory, pattern_match
+    - Cost guardrails: $5/task max, auto circuit-break on budget exceed
+  - Enable: npx claude-code-memory gepa enable
 
 === END INHERITED PARAMETERS ===
 `;

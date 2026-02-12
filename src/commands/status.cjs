@@ -22,6 +22,8 @@ const { detectPython } = require('../lib/python-detector.cjs');
 const { isEncryptionEnabled } = require('../lib/crypto.cjs');
 const { getConfig, getMemorySize } = require('../lib/memory-repo.cjs');
 const { shouldCleanup } = require('../lib/auto-cleanup.cjs');
+const { isEnabled: isGepaEnabled, getPopulation, getState: getGepaState, getGepaConfig } = require('../lib/gepa-core.cjs');
+const { getEffortReport, getNodeStates: getEffortStates } = require('../lib/gepa-effort.cjs');
 
 function readJSON(filePath) {
   try { return JSON.parse(fs.readFileSync(filePath, 'utf-8')); } catch { return null; }
@@ -143,6 +145,30 @@ print(json.dumps({"total_nodes": total, "total_relations": rels, "by_type": type
     byType: dbStats ? dbStats.by_type : {},
   };
 
+  // ── GEPA ──
+  const gepaEnabled = isGepaEnabled(projectRoot);
+  const gepaPopulation = gepaEnabled ? getPopulation(projectRoot) : null;
+  const gepaState = gepaEnabled ? getGepaState(projectRoot) : null;
+  const gepaConfig = getGepaConfig(projectRoot);
+
+  const effortStates = gepaEnabled ? getEffortStates(projectRoot) : null;
+  const effortReport = gepaEnabled ? getEffortReport(projectRoot) : null;
+
+  result.gepa = {
+    enabled: gepaEnabled,
+    cycle: gepaState ? gepaState.cycle : 0,
+    lastReflection: gepaState ? gepaState.lastReflection : null,
+    population: gepaPopulation || { constant: 0, mutating: 0, file: 0, total: 0 },
+    budget: gepaConfig.contextBudget,
+    effort: effortStates ? {
+      taskId: effortReport.taskId,
+      complexity: effortReport.complexityScore,
+      escalations: effortReport.totalEscalations,
+      failures: effortReport.totalFailures,
+      cost: effortReport.costEstimate,
+    } : null,
+  };
+
   // ── Encryption ──
   result.encryption = {
     enabled: isEncryptionEnabled(),
@@ -193,6 +219,22 @@ print(json.dumps({"total_nodes": total, "total_relations": rels, "by_type": type
         if (types) console.log(`      Types: ${types}`);
       }
     }
+  }
+
+  console.log('\nGEPA:');
+  if (result.gepa.enabled) {
+    const pop = result.gepa.population;
+    console.log(`  Status: ENABLED (cycle ${result.gepa.cycle})`);
+    console.log(`  Layers: constant=${pop.constant} mutating=${pop.mutating} file=${pop.file} (total=${pop.total})`);
+    if (result.gepa.lastReflection) console.log(`  Last reflection: ${result.gepa.lastReflection}`);
+    const bud = result.gepa.budget;
+    console.log(`  Budget: constant=${bud.constant} mutating=${bud.mutating} file=${bud.file} total=${bud.total} chars`);
+    if (result.gepa.effort) {
+      const e = result.gepa.effort;
+      console.log(`  Effort: task=${e.taskId || 'none'} complexity=${e.complexity ?? '-'} escalations=${e.escalations} cost=$${e.cost}`);
+    }
+  } else {
+    console.log('  Status: disabled (enable with `npx claude-code-memory gepa enable`)');
   }
 
   console.log('\nEncryption:');

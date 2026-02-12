@@ -18,6 +18,17 @@ const { getMemoryDir, getMemoryDbPath } = require('./path-resolver.cjs');
 const { getConfig, getMemorySize } = require('./memory-repo.cjs');
 const { detectPython } = require('./python-detector.cjs');
 
+// Lazy-load GEPA modules to avoid circular dependencies
+function getGepaModules() {
+  try {
+    return {
+      isEnabled: require('./gepa-core.cjs').isEnabled,
+      getGepaDir: require('./gepa-core.cjs').getGepaDir,
+      paretoSelect: require('./gepa-fitness.cjs').paretoSelect,
+    };
+  } catch { return null; }
+}
+
 /**
  * Check if cleanup is needed (DB > threshold % of maxSizeMB).
  * @param {string} projectRoot
@@ -174,4 +185,88 @@ print(json.dumps({"deleted": len(deleted), "vacuumed": vacuumed, "entries": dele
   }
 }
 
-module.exports = { shouldCleanup, cleanup };
+/**
+ * GEPA-aware cleanup using Pareto selection and archiving.
+ * Archives entries instead of deleting when GEPA is enabled.
+ *
+ * @param {string} projectRoot
+ * @param {object} [options]
+ * @param {boolean} [options.dryRun]
+ * @param {number} [options.count] - Number to archive (default: 20)
+ * @returns {{ archived: number, archivePath?: string, error?: string }}
+ */
+function gepaCleanup(projectRoot, options = {}) {
+  const gepa = getGepaModules();
+  if (!gepa || !gepa.isEnabled(projectRoot)) {
+    return { archived: 0, error: 'GEPA not enabled' };
+  }
+
+  const count = options.count || 20;
+  const selection = gepa.paretoSelect(projectRoot, count, {
+    diversityQuota: 3,
+  });
+
+  if (selection.candidates.length === 0) {
+    return { archived: 0 };
+  }
+
+  if (options.dryRun) {
+    return { archived: selection.candidates.length, dryRun: true, candidates: selection.candidates };
+  }
+
+  // Archive to .claude-memory/gepa/archive/
+  const archiveDir = path.join(gepa.getGepaDir(projectRoot), 'archive');
+  try { fs.mkdirSync(archiveDir, { recursive: true }); } catch { /* ok */ }
+
+  const archivePath = path.join(archiveDir, `archive-${Date.now()}.json`);
+  fs.writeFileSync(archivePath, JSON.stringify({
+    archivedAt: new Date().toISOString(),
+    entries: selection.candidates,
+    preserved: selection.preserved,
+  }, null, 2));
+
+  // Soft-delete in database (set deprecated_at instead of DELETE)
+  const dbPath = getMemoryDbPath(projectRoot);
+  const python = detectPython();
+  if (python.available && fs.existsSync(dbPath)) {
+    const ids = selection.candidates.map(c => c.id);
+    const script = `
+import sqlite3, json
+from datetime import datetime
+
+db_path = ${JSON.stringify(dbPath.replace(/\\/g, '/'))}
+ids = ${JSON.stringify(ids)}
+
+conn = sqlite3.connect(db_path)
+cols = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+
+if 'deprecated_at' in cols:
+    now = datetime.now().isoformat()
+    for node_id in ids:
+        conn.execute("UPDATE nodes SET deprecated_at = ? WHERE id = ?", (now, node_id))
+    conn.commit()
+    print(json.dumps({"archived": len(ids)}))
+else:
+    # Fallback: hard delete if GEPA columns not present
+    for node_id in ids:
+        conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+    conn.commit()
+    print(json.dumps({"archived": len(ids), "hardDelete": True}))
+
+conn.close()
+`;
+    try {
+      execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch { /* ok */ }
+  }
+
+  return {
+    archived: selection.candidates.length,
+    archivePath,
+    preserved: selection.preserved,
+  };
+}
+
+module.exports = { shouldCleanup, cleanup, gepaCleanup };

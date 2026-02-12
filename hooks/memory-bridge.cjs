@@ -259,6 +259,35 @@ function tryGraphMemoryStats() {
   } catch { return null; }
 }
 
+// ─── GEPA Layer Query ────────────────────────────────────────────────────────
+
+/**
+ * Query a specific GEPA layer with character budget.
+ * Returns formatted string or null.
+ */
+function tryGepaLayerQuery(layer, charBudget) {
+  const cli = MEMORY_CLI || findMemoryCli();
+  if (!cli) return null;
+  try {
+    const result = execFileSync(PYTHON, [
+      cli, 'gepa-query', '', '--layer', layer, '--limit', '20', '--fast',
+    ], {
+      cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+
+    const parsed = JSON.parse(result);
+    if (!parsed.results || parsed.results.length === 0) return null;
+
+    let output = '';
+    for (const r of parsed.results) {
+      const line = `[${r.type.toUpperCase()}] (fit=${(r.fitness || 0).toFixed(2)}) ${r.content.slice(0, 200)}\n`;
+      if (output.length + line.length > charBudget) break;
+      output += line;
+    }
+    return output.trim() || null;
+  } catch { return null; }
+}
+
 // ─── Auto-Memory Discovery ─────────────────────────────────────────────────
 
 function findAutoMemoryPath() {
@@ -323,48 +352,88 @@ const handlers = {
     ensureDir(BRIDGE_DIR);
     const parts = [];
 
-    // 1. Planning files
+    // Read GEPA config for budget-aware context loading
+    const configPath = path.join(MEMORY_DIR, 'config.json');
+    const config = readJSON(configPath) || {};
+    const gepaEnabled = config.gepa && config.gepa.enabled;
+    const budget = (gepaEnabled && config.gepa.contextBudget) || {
+      constant: 4000, mutating: 3000, file: 2000, total: 10000,
+    };
+
+    let totalChars = 0;
+
+    // GEPA budget-aware loading: constant first, then mutating, then file
+    if (gepaEnabled) {
+      // 1. Constant memory (highest priority, importance DESC)
+      const constantCtx = tryGepaLayerQuery('constant', budget.constant);
+      if (constantCtx) {
+        parts.push('## Constant Memory (principles & proven patterns)\n' + constantCtx);
+        totalChars += constantCtx.length;
+      }
+
+      // 2. Mutating memory (fitness DESC)
+      const remainingBudget = budget.total - totalChars;
+      const mutatingBudget = Math.min(budget.mutating, remainingBudget);
+      const mutatingCtx = tryGepaLayerQuery('mutating', mutatingBudget);
+      if (mutatingCtx) {
+        parts.push('## Mutating Memory (strategies & tactics)\n' + mutatingCtx);
+        totalChars += mutatingCtx.length;
+      }
+    }
+
+    // 3. Planning files (File layer in GEPA terms)
+    const fileBudget = gepaEnabled ? Math.min(budget.file, budget.total - totalChars) : 4000;
     const planMd = readFile(PLAN_FILE);
     if (planMd) {
       const goal = extractGoal(planMd);
       const currentPhase = extractCurrentPhase(planMd);
       const phases = extractPhases(planMd);
       const phasesSummary = phases.map(p => `  ${p.number}. ${p.name} [${p.status}]`).join('\n');
-      parts.push([
+      const planCtx = [
         '## Planning Context (task_plan.md)',
         `**Goal:** ${goal}`,
         `**Current Phase:** ${currentPhase}`,
         '**Phases:**', phasesSummary,
-      ].join('\n'));
+      ].join('\n').slice(0, fileBudget);
+      parts.push(planCtx);
+      totalChars += planCtx.length;
     }
 
-    // 2. Findings
+    // 4. Findings
     const findingsMd = readFile(FINDINGS_FILE);
-    if (findingsMd) {
-      parts.push('## Key Findings\n' + findingsMd.split('\n').slice(0, 40).join('\n'));
+    if (findingsMd && totalChars < budget.total) {
+      const remaining = budget.total - totalChars;
+      const findingsSlice = findingsMd.split('\n').slice(0, 40).join('\n').slice(0, remaining);
+      parts.push('## Key Findings\n' + findingsSlice);
+      totalChars += findingsSlice.length;
     }
 
-    // 3. Bridge state
+    // 5. Bridge state
     const bridgeState = readJSON(BRIDGE_STATE);
     if (bridgeState && bridgeState.lastSync) {
       parts.push(`## Memory Bridge\nLast sync: ${bridgeState.lastSync}`);
     }
 
-    // 4. Auto-memory
-    const autoMemPath = findAutoMemoryPath();
-    const autoMem = readFile(autoMemPath);
-    if (autoMem) {
-      const clodSection = autoMem.match(/## Clod Project[\s\S]*?(?=\n## [^#]|$)/);
-      if (clodSection) parts.push('## Auto-Memory\n' + clodSection[0].slice(0, 1500));
+    // 6. Auto-memory (skip if already over budget)
+    if (totalChars < budget.total) {
+      const autoMemPath = findAutoMemoryPath();
+      const autoMem = readFile(autoMemPath);
+      if (autoMem) {
+        const remaining = budget.total - totalChars;
+        const clodSection = autoMem.match(/## Clod Project[\s\S]*?(?=\n## [^#]|$)/);
+        if (clodSection) parts.push('## Auto-Memory\n' + clodSection[0].slice(0, Math.min(1500, remaining)));
+      }
     }
 
-    // 5. GraphMemory
-    const graphStats = tryGraphMemoryStats();
-    if (graphStats && graphStats.total_nodes > 0) {
-      const goal = extractGoal(readFile(PLAN_FILE));
-      const queryTerm = goal || 'project patterns decisions errors';
-      const graphContext = tryGraphMemoryQuery(queryTerm, 5);
-      if (graphContext) parts.push('## GraphMemory (' + graphStats.total_nodes + ' nodes)\n' + graphContext);
+    // 7. GraphMemory (non-GEPA mode only — in GEPA mode, layers handle this)
+    if (!gepaEnabled) {
+      const graphStats = tryGraphMemoryStats();
+      if (graphStats && graphStats.total_nodes > 0) {
+        const goal = extractGoal(readFile(PLAN_FILE));
+        const queryTerm = goal || 'project patterns decisions errors';
+        const graphContext = tryGraphMemoryQuery(queryTerm, 5);
+        if (graphContext) parts.push('## GraphMemory (' + graphStats.total_nodes + ' nodes)\n' + graphContext);
+      }
     }
 
     if (parts.length > 0) {
@@ -373,11 +442,14 @@ const handlers = {
       process.stdout.write('[memory-bridge] No context found\n');
     }
 
+    const graphStats = gepaEnabled ? null : tryGraphMemoryStats();
     writeJSON(BRIDGE_STATE, {
       ...(bridgeState || {}),
       lastContextLoad: now(),
       sourcesLoaded: parts.length,
       graphMemoryNodes: graphStats ? graphStats.total_nodes : 0,
+      gepaEnabled,
+      totalChars,
     });
   },
 
@@ -439,14 +511,35 @@ const handlers = {
     }
     syncManifest.bridges.graphMemory = graphSynced;
 
+    // GEPA: Update fitness scores on persist
+    const configPath = path.join(MEMORY_DIR, 'config.json');
+    const config = readJSON(configPath) || {};
+    const gepaEnabled = config.gepa && config.gepa.enabled;
+    let fitnessUpdated = false;
+
+    if (gepaEnabled) {
+      const memoryCli = MEMORY_CLI || findMemoryCli();
+      if (memoryCli) {
+        try {
+          execFileSync(PYTHON, [memoryCli, 'fitness-update', '--fast'], {
+            cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          fitnessUpdated = true;
+        } catch { /* fitness update failed gracefully */ }
+      }
+    }
+
     writeJSON(BRIDGE_STATE, {
       lastSync: now(), lastPersist: now(),
       mcpEntries: syncManifest.bridges.cacheToMCP ? (cache.plan.phases.length + 1) : 0,
       autoMemoryPending: pendingUpdates.updates.length,
       graphMemorySynced: graphSynced,
+      gepaEnabled,
+      fitnessUpdated,
     });
 
-    process.stdout.write(`[memory-bridge] Persisted: planning(${syncManifest.plan.phasesComplete}/${syncManifest.plan.phasesTotal}) -> MCP(${cliSynced ? 'OK' : 'pending'}) -> GraphMemory(${graphSynced ? 'OK' : 'skip'})\n`);
+    const gepaSuffix = gepaEnabled ? ` -> Fitness(${fitnessUpdated ? 'OK' : 'skip'})` : '';
+    process.stdout.write(`[memory-bridge] Persisted: planning(${syncManifest.plan.phasesComplete}/${syncManifest.plan.phasesTotal}) -> MCP(${cliSynced ? 'OK' : 'pending'}) -> GraphMemory(${graphSynced ? 'OK' : 'skip'})${gepaSuffix}\n`);
   },
 
   'on-planning-edit'(flags) {
