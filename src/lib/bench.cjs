@@ -58,6 +58,15 @@
  *   AB — Content freshness (version-based boost)
  *   AC — Relation density (hub node detection)
  *   AD — Context coherence (related entry loading)
+ *   ...
+ *   DW — Write amplification factor (in-place vs append vs COW)
+ *   DX — Memory locality (ROWID proximity for co-accessed entries)
+ *   DY — Query plan cost (typical vs optimized query plans)
+ *   DZ — Bloom filter approximation (pre-check to avoid full scans)
+ *   EA — Entry compression ratio (compressibility by node type)
+ *   EB — Relation transitivity (A→B→C path usefulness)
+ *   EC — Fitness calibration (score accuracy vs actual usefulness)
+ *   ED — Memory fragmentation recovery (VACUUM vs incremental cleanup)
  *
  * Inspired by: LongMemEval, MemoryBench, RouteLLM/RouterBench, Evo-Memory
  */
@@ -10483,6 +10492,1961 @@ print(json.dumps({"total_queries": ITERS,"no_cache_ms": round(time_no_cache * 10
   } finally { cleanTmpDir(tmpDir); }
 }
 
+// ─── Round 16: DW-ED ────────────────────────────────────────────────────────
+
+// DW - Write Amplification Factor
+function benchWriteAmplificationFactor() {
+  const tmpDir = makeTmpDir('write-amp-factor');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'write-amp-factor', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 300; i++) entries.push({ id: `waf_${i}`, content: `write amplification entry ${i} about ${['api', 'auth', 'db', 'cache', 'queue'][i % 5]}`, node_type: i % 3 === 0 ? 'task_solution' : 'insight', importance: 3 + Math.random() * 7, access_count: Math.floor(Math.random() * 15), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random() * 0.9 + 0.05, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+ids=[r[0] for r in c.execute("SELECT id FROM nodes WHERE memory_layer='mutating'").fetchall()]
+total=len(ids)
+# In-place update: UPDATE existing rows
+t0=time.time()
+inplace_writes=0
+for nid in ids:
+    c.execute("UPDATE nodes SET fitness=fitness*1.01, updated_at=datetime('now') WHERE id=?", (nid,))
+    inplace_writes+=1
+db.rollback()
+time_inplace=time.time()-t0
+# Append-only: INSERT new version rows (simulated)
+t0=time.time()
+append_writes=0
+for nid in ids:
+    row=c.execute("SELECT content,node_type,importance,access_count,memory_layer,fitness,generation,version FROM nodes WHERE id=?", (nid,)).fetchone()
+    if row:
+        new_id=nid+"_v2"
+        c.execute("INSERT OR REPLACE INTO nodes (id,content,node_type,importance,access_count,memory_layer,fitness,generation,version,created_at,updated_at,accessed_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'),datetime('now'))", (new_id, row[0], row[1], row[2]*1.01, row[3], row[4], row[5]*1.01, row[6], row[7]+1))
+        append_writes+=2
+db.rollback()
+time_append=time.time()-t0
+# Copy-on-write: DELETE old + INSERT new
+t0=time.time()
+cow_writes=0
+for nid in ids[:50]:
+    row=c.execute("SELECT content,node_type,importance,access_count,memory_layer,fitness,generation,version FROM nodes WHERE id=?", (nid,)).fetchone()
+    if row:
+        c.execute("DELETE FROM nodes WHERE id=?", (nid,))
+        c.execute("INSERT INTO nodes (id,content,node_type,importance,access_count,memory_layer,fitness,generation,version,created_at,updated_at,accessed_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'),datetime('now'))", (nid, row[0], row[1], row[2]*1.01, row[3], row[4], row[5]*1.01, row[6], row[7]+1))
+        cow_writes+=2
+db.rollback()
+time_cow=time.time()-t0
+cow_normalized=time_cow*(total/50) if total>0 else 0
+inplace_amp=inplace_writes/total if total>0 else 0
+append_amp=append_writes/total if total>0 else 0
+cow_amp=cow_writes/(min(50,total)) if total>0 else 0
+db.close()
+print(json.dumps({"total_entries":total,"inplace_writes":inplace_writes,"inplace_amp_factor":round(inplace_amp,2),"inplace_ms":round(time_inplace*1000,2),"append_writes":append_writes,"append_amp_factor":round(append_amp,2),"append_ms":round(time_append*1000,2),"cow_writes":cow_writes,"cow_amp_factor":round(cow_amp,2),"cow_ms":round(cow_normalized*1000,2),"inplace_is_lowest_amp":inplace_amp<=append_amp and inplace_amp<=cow_amp}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'write-amp-factor', error: `Write amplification failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'write-amp-factor', metrics: { ...result, hypotheses: ['DW_write_amplification_factor'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// DX - Memory Locality (ROWID proximity)
+function benchMemoryLocality() {
+  const tmpDir = makeTmpDir('mem-locality');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'mem-locality', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    const topics = ['auth', 'database', 'api', 'testing', 'deploy'];
+    for (let i = 0; i < 200; i++) entries.push({ id: `ml_${i}`, content: `locality entry ${i} about ${topics[i % 5]} module implementation`, node_type: 'task_solution', importance: 3 + Math.random() * 7, access_count: Math.floor(Math.random() * 20), memory_layer: 'mutating', fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+topics=['auth','database','api','testing','deploy']
+topic_rowids={}
+for topic in topics:
+    rows=c.execute("SELECT rowid, id FROM nodes WHERE content LIKE ?", ('%'+topic+'%',)).fetchall()
+    topic_rowids[topic]=[r[0] for r in rows]
+intra_gaps=[]
+for topic, rowids in topic_rowids.items():
+    rowids.sort()
+    for i in range(1,len(rowids)):
+        intra_gaps.append(rowids[i]-rowids[i-1])
+inter_gaps=[]
+for i,t1 in enumerate(topics):
+    for t2 in topics[i+1:]:
+        if topic_rowids[t1] and topic_rowids[t2]:
+            for r1 in topic_rowids[t1][:5]:
+                for r2 in topic_rowids[t2][:5]:
+                    inter_gaps.append(abs(r1-r2))
+avg_intra=sum(intra_gaps)/len(intra_gaps) if intra_gaps else 0
+avg_inter=sum(inter_gaps)/len(inter_gaps) if inter_gaps else 0
+locality_ratio=avg_inter/avg_intra if avg_intra>0 else 0
+db.close()
+print(json.dumps({"total_entries":200,"topics":len(topics),"avg_intra_topic_gap":round(avg_intra,2),"avg_inter_topic_gap":round(avg_inter,2),"locality_ratio":round(locality_ratio,2),"entries_per_topic":len(topic_rowids.get('auth',[])),"has_locality":locality_ratio>1.0}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'mem-locality', error: `Memory locality failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'mem-locality', metrics: { ...result, hypotheses: ['DX_memory_locality'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// DY - Query Plan Cost Comparison
+function benchQueryPlanCost() {
+  const tmpDir = makeTmpDir('query-plan-cost');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'query-plan-cost', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 500; i++) entries.push({ id: `qpc_${i}`, content: `query plan cost entry ${i} type ${['bug', 'feature', 'refactor', 'perf', 'docs'][i % 5]}`, node_type: ['task_solution', 'insight', 'error_pattern', 'workflow_routing'][i % 4], importance: Math.random() * 10, access_count: Math.floor(Math.random() * 30), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+typical_queries=[
+    "SELECT * FROM nodes WHERE memory_layer='mutating' ORDER BY fitness DESC",
+    "SELECT * FROM nodes WHERE node_type='task_solution' AND importance > 5",
+    "SELECT * FROM nodes WHERE content LIKE '%bug%' ORDER BY updated_at DESC",
+]
+optimized_queries=[
+    "SELECT id, content, fitness FROM nodes WHERE memory_layer='mutating' ORDER BY fitness DESC LIMIT 20",
+    "SELECT id, content, importance FROM nodes WHERE node_type='task_solution' AND importance > 5 LIMIT 20",
+    "SELECT id, content FROM nodes INDEXED BY idx_nodes_type WHERE node_type='task_solution' AND fitness > 0.5 LIMIT 20",
+]
+typical_plans=[]
+for q in typical_queries:
+    try:
+        plan=c.execute("EXPLAIN QUERY PLAN "+q).fetchall()
+        typical_plans.append({"query":q[:60],"plan_steps":len(plan),"uses_scan":"SCAN" in str(plan),"uses_index":"INDEX" in str(plan) or "SEARCH" in str(plan),"plan":str(plan)[:100]})
+    except: typical_plans.append({"query":q[:60],"plan_steps":0,"error":True})
+optimized_plans=[]
+for q in optimized_queries:
+    try:
+        plan=c.execute("EXPLAIN QUERY PLAN "+q).fetchall()
+        optimized_plans.append({"query":q[:60],"plan_steps":len(plan),"uses_scan":"SCAN" in str(plan),"uses_index":"INDEX" in str(plan) or "SEARCH" in str(plan),"plan":str(plan)[:100]})
+    except: optimized_plans.append({"query":q[:60],"plan_steps":0,"error":True})
+t0=time.time()
+for _ in range(100):
+    for q in typical_queries:
+        c.execute(q).fetchall()
+time_typical=time.time()-t0
+t0=time.time()
+for _ in range(100):
+    for q in optimized_queries:
+        try: c.execute(q).fetchall()
+        except: pass
+time_optimized=time.time()-t0
+speedup=time_typical/time_optimized if time_optimized>0 else 0
+typical_scans=sum(1 for p in typical_plans if p.get('uses_scan',False))
+optimized_scans=sum(1 for p in optimized_plans if p.get('uses_scan',False))
+db.close()
+print(json.dumps({"typical_queries":len(typical_queries),"optimized_queries":len(optimized_queries),"typical_scan_count":typical_scans,"optimized_scan_count":optimized_scans,"typical_ms":round(time_typical*1000,2),"optimized_ms":round(time_optimized*1000,2),"speedup_factor":round(speedup,2),"optimized_fewer_scans":optimized_scans<=typical_scans}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'query-plan-cost', error: `Query plan cost failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'query-plan-cost', metrics: { ...result, hypotheses: ['DY_query_plan_cost'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// DZ - Bloom Filter Approximation
+function benchBloomFilterApprox() {
+  const tmpDir = makeTmpDir('bloom-filter');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'bloom-filter', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 400; i++) entries.push({ id: `bf_${i}`, content: `bloom filter entry ${i} keyword_${i % 20} topic_${i % 8}`, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: Math.random() * 10, access_count: Math.floor(Math.random() * 15), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time,hashlib
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+BIT_SIZE=1024
+bloom=bytearray(BIT_SIZE//8)
+def bloom_add(item):
+    for i in range(3):
+        h=int(hashlib.md5((item+str(i)).encode()).hexdigest(),16)%BIT_SIZE
+        bloom[h//8]|=(1<<(h%8))
+def bloom_check(item):
+    for i in range(3):
+        h=int(hashlib.md5((item+str(i)).encode()).hexdigest(),16)%BIT_SIZE
+        if not(bloom[h//8]&(1<<(h%8))):
+            return False
+    return True
+rows=c.execute("SELECT id, content FROM nodes").fetchall()
+for r in rows:
+    for word in r[1].split():
+        bloom_add(word)
+existing_keywords=["keyword_0","keyword_5","keyword_10","keyword_15","topic_0","topic_3"]
+missing_keywords=["nonexistent_xyz","missing_abc","fake_keyword_99","absent_term"]
+true_positives=0
+false_negatives=0
+for kw in existing_keywords:
+    if bloom_check(kw): true_positives+=1
+    else: false_negatives+=1
+true_negatives=0
+false_positives=0
+for kw in missing_keywords:
+    if bloom_check(kw): false_positives+=1
+    else: true_negatives+=1
+t0=time.time()
+for _ in range(200):
+    for kw in existing_keywords+missing_keywords:
+        bloom_check(kw)
+bloom_ms=time.time()-t0
+t0=time.time()
+for _ in range(200):
+    for kw in existing_keywords+missing_keywords:
+        c.execute("SELECT COUNT(*) FROM nodes WHERE content LIKE ?", ('%'+kw+'%',)).fetchone()
+scan_ms=time.time()-t0
+speedup=scan_ms/bloom_ms if bloom_ms>0 else 0
+db.close()
+print(json.dumps({"total_entries":len(rows),"bloom_bits":BIT_SIZE,"existing_tested":len(existing_keywords),"missing_tested":len(missing_keywords),"true_positives":true_positives,"false_negatives":false_negatives,"true_negatives":true_negatives,"false_positives":false_positives,"bloom_ms":round(bloom_ms*1000,2),"scan_ms":round(scan_ms*1000,2),"speedup":round(speedup,2),"bloom_faster":speedup>1.0}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'bloom-filter', error: `Bloom filter failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'bloom-filter', metrics: { ...result, hypotheses: ['DZ_bloom_filter_approximation'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EA - Entry Compression Ratio
+function benchEntryCompressionRatio() {
+  const tmpDir = makeTmpDir('entry-compress');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'entry-compress', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 100; i++) entries.push({ id: `ec_task_${i}`, content: `Task solution for ${['api endpoint', 'database query', 'auth flow', 'cache invalidation', 'error handling'][i % 5]}: implement the ${i} step using standard patterns with proper error handling and logging`, node_type: 'task_solution', importance: 5 + Math.random() * 5, access_count: Math.floor(Math.random() * 10), memory_layer: 'mutating', fitness: Math.random(), generation: 2, version: 1 });
+    for (let i = 0; i < 100; i++) entries.push({ id: `ec_insight_${i}`, content: `Insight ${i}: discovered that ${['caching improves', 'indexing helps', 'batching reduces', 'pooling optimizes', 'prefetching speeds'][i % 5]} performance by ${10 + i}% in production workloads`, node_type: 'insight', importance: 3 + Math.random() * 7, access_count: Math.floor(Math.random() * 10), memory_layer: 'constant', fitness: Math.random(), generation: 2, version: 1 });
+    for (let i = 0; i < 100; i++) entries.push({ id: `ec_error_${i}`, content: `Error pattern ${i}: ${['TypeError', 'ReferenceError', 'SyntaxError', 'RangeError', 'NetworkError'][i % 5]} occurs when ${['input validation', 'null check', 'boundary test', 'async handling', 'type coercion'][i % 5]} is missing in module_${i % 10}`, node_type: 'error_pattern', importance: Math.random() * 10, access_count: Math.floor(Math.random() * 10), memory_layer: 'file', fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,zlib
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+types=['task_solution','insight','error_pattern']
+results={}
+for nt in types:
+    rows=c.execute("SELECT content FROM nodes WHERE node_type=?", (nt,)).fetchall()
+    raw_size=sum(len(r[0].encode('utf-8')) for r in rows)
+    compressed=zlib.compress(b''.join(r[0].encode('utf-8') for r in rows),6)
+    comp_size=len(compressed)
+    ratio=raw_size/comp_size if comp_size>0 else 0
+    results[nt]={"count":len(rows),"raw_bytes":raw_size,"compressed_bytes":comp_size,"ratio":round(ratio,2)}
+all_content=b''.join(r[0].encode('utf-8') for r in c.execute("SELECT content FROM nodes").fetchall())
+total_raw=len(all_content)
+total_comp=len(zlib.compress(all_content,6))
+overall_ratio=total_raw/total_comp if total_comp>0 else 0
+best_type=max(results,key=lambda t:results[t]['ratio'])
+db.close()
+print(json.dumps({"total_entries":300,"total_raw_bytes":total_raw,"total_compressed_bytes":total_comp,"overall_ratio":round(overall_ratio,2),"by_type":results,"best_compressible_type":best_type,"best_ratio":results[best_type]['ratio'],"compression_worthwhile":overall_ratio>1.5}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'entry-compress', error: `Entry compression failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'entry-compress', metrics: { ...result, hypotheses: ['EA_entry_compression_ratio'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EB - Relation Transitivity
+function benchRelationTransitivityPath() {
+  const tmpDir = makeTmpDir('rel-transit');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'rel-transit', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 100; i++) entries.push({ id: `rt_${i}`, content: `transitivity node ${i} in chain about ${['auth', 'db', 'api', 'cache', 'queue'][i % 5]}`, node_type: 'task_solution', importance: 3 + Math.random() * 7, access_count: Math.floor(Math.random() * 10), memory_layer: 'mutating', fitness: Math.random() * 0.8 + 0.1, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const rels = [];
+    // Create chains: A→B→C→D→E
+    for (let chain = 0; chain < 10; chain++) {
+      for (let step = 0; step < 4; step++) {
+        rels.push({ source_id: `rt_${chain * 10 + step}`, target_id: `rt_${chain * 10 + step + 1}`, relation_type: 'depends_on' });
+      }
+    }
+    // Add some direct A→C shortcuts
+    for (let chain = 0; chain < 5; chain++) {
+      rels.push({ source_id: `rt_${chain * 10}`, target_id: `rt_${chain * 10 + 2}`, relation_type: 'shortcut' });
+    }
+    insertRelations(dbPath, rels);
+    const script = `
+import sqlite3,json
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+def find_reachable(start_id, max_hops):
+    visited=set()
+    frontier={start_id}
+    for hop in range(max_hops):
+        next_f=set()
+        for nid in frontier:
+            targets=c.execute("SELECT target_id FROM relations WHERE source_id=?", (nid,)).fetchall()
+            for t in targets:
+                if t[0] not in visited and t[0]!=start_id:
+                    next_f.add(t[0])
+                    visited.add(t[0])
+        frontier=next_f
+    return visited
+direct_reach=[]
+transitive_reach=[]
+for chain in range(10):
+    start_id=f"rt_{chain*10}"
+    d=find_reachable(start_id,1)
+    t=find_reachable(start_id,3)
+    direct_reach.append(len(d))
+    transitive_reach.append(len(t))
+avg_direct=sum(direct_reach)/len(direct_reach) if direct_reach else 0
+avg_transitive=sum(transitive_reach)/len(transitive_reach) if transitive_reach else 0
+amplification=avg_transitive/avg_direct if avg_direct>0 else 0
+useful_paths=0
+total_pairs=0
+for chain in range(10):
+    a_id=f"rt_{chain*10}"
+    c_id=f"rt_{chain*10+2}"
+    a_fitness=c.execute("SELECT fitness FROM nodes WHERE id=?", (a_id,)).fetchone()
+    c_fitness=c.execute("SELECT fitness FROM nodes WHERE id=?", (c_id,)).fetchone()
+    if a_fitness and c_fitness:
+        total_pairs+=1
+        if abs(a_fitness[0]-c_fitness[0])<0.5:
+            useful_paths+=1
+useful_ratio=useful_paths/total_pairs if total_pairs>0 else 0
+total_rels=c.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+db.close()
+print(json.dumps({"total_nodes":100,"total_relations":total_rels,"avg_direct_reach":round(avg_direct,2),"avg_transitive_reach":round(avg_transitive,2),"reach_amplification":round(amplification,2),"useful_transitive_paths":useful_paths,"total_pairs_tested":total_pairs,"useful_path_ratio":round(useful_ratio,2),"transitivity_useful":amplification>2.0}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'rel-transit', error: `Relation transitivity failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'rel-transit', metrics: { ...result, hypotheses: ['EB_relation_transitivity'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EC - Fitness Calibration
+function benchFitnessCalibration() {
+  const tmpDir = makeTmpDir('fitness-calib');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'fitness-calib', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    // High fitness entries: high importance, high access
+    for (let i = 0; i < 100; i++) entries.push({ id: `fc_high_${i}`, content: `high fitness calibration entry ${i} critical production fix applied and verified`, node_type: 'task_solution', importance: 7 + Math.random() * 3, access_count: 10 + Math.floor(Math.random() * 20), memory_layer: 'constant', fitness: 0.7 + Math.random() * 0.3, generation: 2, version: 1 });
+    // Medium fitness entries: medium importance, medium access
+    for (let i = 0; i < 100; i++) entries.push({ id: `fc_med_${i}`, content: `medium fitness calibration entry ${i} routine implementation task`, node_type: 'insight', importance: 3 + Math.random() * 4, access_count: 3 + Math.floor(Math.random() * 7), memory_layer: 'mutating', fitness: 0.3 + Math.random() * 0.4, generation: 2, version: 1 });
+    // Low fitness entries: low importance, rarely accessed
+    for (let i = 0; i < 100; i++) entries.push({ id: `fc_low_${i}`, content: `low fitness calibration entry ${i} obsolete debug note`, node_type: 'error_pattern', importance: Math.random() * 3, access_count: Math.floor(Math.random() * 2), memory_layer: 'file', fitness: Math.random() * 0.3, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,statistics
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+high=c.execute("SELECT fitness, importance, access_count FROM nodes WHERE id LIKE 'fc_high_%'").fetchall()
+med=c.execute("SELECT fitness, importance, access_count FROM nodes WHERE id LIKE 'fc_med_%'").fetchall()
+low=c.execute("SELECT fitness, importance, access_count FROM nodes WHERE id LIKE 'fc_low_%'").fetchall()
+avg_high_fitness=statistics.mean([r[0] for r in high])
+avg_med_fitness=statistics.mean([r[0] for r in med])
+avg_low_fitness=statistics.mean([r[0] for r in low])
+avg_high_importance=statistics.mean([r[1] for r in high])
+avg_med_importance=statistics.mean([r[1] for r in med])
+avg_low_importance=statistics.mean([r[1] for r in low])
+avg_high_access=statistics.mean([r[2] for r in high])
+avg_med_access=statistics.mean([r[2] for r in med])
+avg_low_access=statistics.mean([r[2] for r in low])
+monotonic=avg_high_fitness>avg_med_fitness>avg_low_fitness
+corr_data=[(r[0],r[1]) for r in high+med+low]
+n=len(corr_data)
+mean_f=sum(d[0] for d in corr_data)/n
+mean_i=sum(d[1] for d in corr_data)/n
+cov=sum((d[0]-mean_f)*(d[1]-mean_i) for d in corr_data)/n
+std_f=(sum((d[0]-mean_f)**2 for d in corr_data)/n)**0.5
+std_i=(sum((d[1]-mean_i)**2 for d in corr_data)/n)**0.5
+correlation=cov/(std_f*std_i) if std_f>0 and std_i>0 else 0
+separation_high_low=avg_high_fitness-avg_low_fitness
+db.close()
+print(json.dumps({"total_entries":300,"avg_high_fitness":round(avg_high_fitness,4),"avg_med_fitness":round(avg_med_fitness,4),"avg_low_fitness":round(avg_low_fitness,4),"avg_high_importance":round(avg_high_importance,2),"avg_high_access":round(avg_high_access,2),"fitness_importance_correlation":round(correlation,4),"monotonic_ordering":monotonic,"separation_high_low":round(separation_high_low,4),"well_calibrated":monotonic and correlation>0.3}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'fitness-calib', error: `Fitness calibration failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'fitness-calib', metrics: { ...result, hypotheses: ['EC_fitness_calibration'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ED - Memory Fragmentation Recovery
+function benchFragmentationRecovery() {
+  const tmpDir = makeTmpDir('frag-recovery');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'frag-recovery', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 500; i++) entries.push({ id: `fr_${i}`, content: `fragmentation recovery entry ${i} with padding data for size ${i % 10}`, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: Math.random() * 10, access_count: Math.floor(Math.random() * 20), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time,os
+db_path=${JSON.stringify(dbPath.replace(/\\/g, '/'))}
+db=sqlite3.connect(db_path)
+c=db.cursor()
+# Fragment the database by deleting every other row
+ids=[r[0] for r in c.execute("SELECT id FROM nodes ORDER BY rowid").fetchall()]
+deleted=0
+for i in range(0, len(ids), 2):
+    c.execute("DELETE FROM nodes WHERE id=?", (ids[i],))
+    deleted+=1
+db.commit()
+remaining=c.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+pre_size=os.path.getsize(db_path)
+# Measure query performance before recovery
+t0=time.time()
+for _ in range(100):
+    c.execute("SELECT * FROM nodes WHERE fitness > 0.5 ORDER BY fitness DESC LIMIT 20").fetchall()
+pre_recovery_ms=time.time()-t0
+# VACUUM recovery
+t0=time.time()
+c.execute("VACUUM")
+vacuum_ms=time.time()-t0
+post_vacuum_size=os.path.getsize(db_path)
+t0=time.time()
+for _ in range(100):
+    c.execute("SELECT * FROM nodes WHERE fitness > 0.5 ORDER BY fitness DESC LIMIT 20").fetchall()
+post_vacuum_ms=time.time()-t0
+# Re-fragment for incremental test
+db.close()
+db=sqlite3.connect(db_path)
+c=db.cursor()
+ids2=[r[0] for r in c.execute("SELECT id FROM nodes ORDER BY rowid").fetchall()]
+for i in range(0, len(ids2), 3):
+    c.execute("DELETE FROM nodes WHERE id=?", (ids2[i],))
+db.commit()
+pre_incr_size=os.path.getsize(db_path)
+# Incremental cleanup: reinsert compactly
+t0=time.time()
+c.execute("CREATE TABLE IF NOT EXISTS nodes_compact AS SELECT * FROM nodes ORDER BY memory_layer, fitness DESC")
+c.execute("DELETE FROM nodes")
+c.execute("INSERT INTO nodes SELECT * FROM nodes_compact")
+c.execute("DROP TABLE nodes_compact")
+db.commit()
+incr_ms=time.time()-t0
+post_incr_size=os.path.getsize(db_path)
+t0=time.time()
+for _ in range(100):
+    c.execute("SELECT * FROM nodes WHERE fitness > 0.5 ORDER BY fitness DESC LIMIT 20").fetchall()
+post_incr_ms=time.time()-t0
+vacuum_reduction=round((1-post_vacuum_size/pre_size)*100,2) if pre_size>0 else 0
+vacuum_speedup=round(pre_recovery_ms/post_vacuum_ms,2) if post_vacuum_ms>0 else 0
+incr_speedup=round(pre_recovery_ms/post_incr_ms,2) if post_incr_ms>0 else 0
+db.close()
+print(json.dumps({"original_count":500,"deleted_count":deleted,"remaining_count":remaining,"pre_size_bytes":pre_size,"post_vacuum_size_bytes":post_vacuum_size,"vacuum_reduction_pct":vacuum_reduction,"vacuum_ms":round(vacuum_ms*1000,2),"vacuum_query_speedup":vacuum_speedup,"incr_cleanup_ms":round(incr_ms*1000,2),"incr_query_speedup":incr_speedup,"vacuum_better":vacuum_speedup>=incr_speedup}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'frag-recovery', error: `Fragmentation recovery failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'frag-recovery', metrics: { ...result, hypotheses: ['ED_fragmentation_recovery'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Round 17: EE-EL ────────────────────────────────────────────────────────
+
+// EE - Temporal Decay Curve Selection
+function benchTemporalDecayCurve() {
+  const tmpDir = makeTmpDir('decay-curve');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'decay-curve', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 300; i++) {
+      const isHot = i % 5 === 0;
+      entries.push({ id: `dc_${i}`, content: `decay curve entry ${i} about ${['api', 'db', 'auth', 'ui', 'test'][i % 5]}`, node_type: i % 3 === 0 ? 'task_solution' : 'insight', importance: isHot ? 7 + Math.random() * 3 : 1 + Math.random() * 4, access_count: isHot ? 10 + Math.floor(Math.random() * 20) : 1 + Math.floor(Math.random() * 3), memory_layer: isHot ? 'constant' : 'mutating', fitness: isHot ? 0.7 + Math.random() * 0.3 : 0.1 + Math.random() * 0.4, generation: 2, version: 1, age_days: isHot ? Math.floor(Math.random() * 10) : 30 + Math.floor(Math.random() * 60), last_access_days: isHot ? Math.floor(Math.random() * 3) : 15 + Math.floor(Math.random() * 45) });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,math
+from datetime import datetime
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+now=datetime.utcnow()
+rows=c.execute("SELECT id, importance, access_count, fitness, accessed_at, created_at FROM nodes").fetchall()
+results={"linear":[],"exponential":[],"step":[]}
+for r in rows:
+    nid, imp, ac, fit, acc_at, cre_at = r
+    try:
+        days_since = (now - datetime.fromisoformat(acc_at)).days
+    except:
+        days_since = 30
+    base_score = (imp / 10.0) * 0.4 + min(ac / 20.0, 1.0) * 0.3 + fit * 0.3
+    linear_decay = max(0, 1.0 - days_since / 90.0)
+    results["linear"].append(base_score * linear_decay)
+    exp_decay = math.exp(-0.693 * days_since / 14.0)
+    results["exponential"].append(base_score * exp_decay)
+    step_decay = 1.0 if days_since <= 7 else (0.5 if days_since <= 30 else 0.1)
+    results["step"].append(base_score * step_decay)
+hot_ids = set(r[0] for r in rows if r[2] >= 10)
+def separation(scores, ids):
+    hot_scores = [s for i, s in enumerate(scores) if rows[i][0] in ids]
+    cold_scores = [s for i, s in enumerate(scores) if rows[i][0] not in ids]
+    return (sum(hot_scores)/len(hot_scores) if hot_scores else 0) - (sum(cold_scores)/len(cold_scores) if cold_scores else 0)
+seps = {k: round(separation(v, hot_ids), 4) for k, v in results.items()}
+avgs = {k: round(sum(v)/len(v), 4) for k, v in results.items()}
+best = max(seps, key=seps.get)
+db.close()
+print(json.dumps({"total_entries": len(rows), "hot_count": len(hot_ids), "linear_sep": seps["linear"], "exponential_sep": seps["exponential"], "step_sep": seps["step"], "linear_avg": avgs["linear"], "exponential_avg": avgs["exponential"], "step_avg": avgs["step"], "best_decay": best, "best_separation": seps[best], "exponential_best": best == "exponential"}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'decay-curve', error: `Temporal decay curve failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'decay-curve', metrics: { ...result, hypotheses: ['EE_temporal_decay_curve_selection'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EF - Cross-Type Relation Value
+function benchCrossTypeRelationValue() {
+  const tmpDir = makeTmpDir('cross-type-rel');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'cross-type-rel', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const types = ['task_solution', 'insight', 'error_pattern', 'workflow_routing'];
+    const entries = [];
+    for (let i = 0; i < 200; i++) entries.push({ id: `ctr_${i}`, content: `cross type relation entry ${i} about ${['api', 'db', 'auth', 'test'][i % 4]}`, node_type: types[i % types.length], importance: 3 + Math.random() * 7, access_count: 1 + Math.floor(Math.random() * 15), memory_layer: i % 4 === 0 ? 'constant' : 'mutating', fitness: 0.3 + Math.random() * 0.6, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const rels = [];
+    for (let i = 0; i < 80; i++) {
+      const srcIdx = i * 2;
+      const tgtSame = srcIdx + types.length;
+      const tgtCross = srcIdx + 1;
+      if (tgtSame < 200) rels.push({ source: `ctr_${srcIdx}`, target: `ctr_${tgtSame}`, type: 'related_to' });
+      if (tgtCross < 200) rels.push({ source: `ctr_${srcIdx}`, target: `ctr_${tgtCross}`, type: 'complements' });
+    }
+    insertRelations(dbPath, rels);
+    const script = `
+import sqlite3,json
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+c.execute("""
+SELECT r.source_id, r.target_id, r.relation_type,
+       s.node_type as src_type, s.importance as src_imp, s.access_count as src_ac, s.fitness as src_fit,
+       t.node_type as tgt_type, t.importance as tgt_imp, t.access_count as tgt_ac, t.fitness as tgt_fit
+FROM relations r
+JOIN nodes s ON r.source_id = s.id
+JOIN nodes t ON r.target_id = t.id
+""")
+rows = c.fetchall()
+same_type_values = []
+cross_type_values = []
+for r in rows:
+    src_type, src_imp, src_ac, src_fit = r[3], r[4], r[5], r[6]
+    tgt_type, tgt_imp, tgt_ac, tgt_fit = r[7], r[8], r[9], r[10]
+    pair_value = (src_imp + tgt_imp) / 20.0 * 0.3 + (src_ac + tgt_ac) / 40.0 * 0.3 + (src_fit + tgt_fit) / 2.0 * 0.4
+    if src_type == tgt_type:
+        same_type_values.append(pair_value)
+    else:
+        cross_type_values.append(pair_value)
+avg_same = sum(same_type_values) / len(same_type_values) if same_type_values else 0
+avg_cross = sum(cross_type_values) / len(cross_type_values) if cross_type_values else 0
+ratio = avg_cross / avg_same if avg_same > 0 else 0
+db.close()
+print(json.dumps({"total_relations": len(rows), "same_type_count": len(same_type_values), "cross_type_count": len(cross_type_values), "avg_same_type_value": round(avg_same, 4), "avg_cross_type_value": round(avg_cross, 4), "cross_to_same_ratio": round(ratio, 4), "cross_type_more_valuable": avg_cross > avg_same}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'cross-type-rel', error: `Cross-type relation value failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'cross-type-rel', metrics: { ...result, hypotheses: ['EF_cross_type_relation_value'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EG - Importance Drift Detection
+function benchImportanceDrift() {
+  const tmpDir = makeTmpDir('importance-drift');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'importance-drift', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 200; i++) {
+      const drifted = i % 4 === 0;
+      const highImp = i % 2 === 0;
+      entries.push({ id: `id_${i}`, content: `importance drift entry ${i} topic ${['api', 'db', 'auth', 'deploy', 'test'][i % 5]}`, node_type: 'task_solution', importance: drifted ? (highImp ? 9 : 1) : (highImp ? 7 : 3), access_count: drifted ? (highImp ? 1 : 20) : (highImp ? 15 : 3), memory_layer: 'mutating', fitness: 0.5, generation: 2, version: 1, age_days: 10 + i % 30, last_access_days: drifted ? (highImp ? 25 : 1) : (highImp ? 2 : 10) });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,math
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows=c.execute("SELECT id, importance, access_count, fitness FROM nodes").fetchall()
+max_ac = max(r[2] for r in rows) if rows else 1
+drifted = []
+aligned = []
+for r in rows:
+    nid, imp, ac, fit = r
+    expected_imp = (ac / max_ac) * 10.0
+    drift_score = abs(imp - expected_imp)
+    entry = {"id": nid, "importance": imp, "access_count": ac, "expected_importance": round(expected_imp, 2), "drift_score": round(drift_score, 2)}
+    if drift_score > 4.0:
+        drifted.append(entry)
+    else:
+        aligned.append(entry)
+avg_drifted_fitness = 0
+avg_aligned_fitness = 0
+if drifted:
+    d_ids = set(e["id"] for e in drifted)
+    avg_drifted_fitness = sum(r[3] for r in rows if r[0] in d_ids) / len(drifted)
+if aligned:
+    a_ids = set(e["id"] for e in aligned)
+    avg_aligned_fitness = sum(r[3] for r in rows if r[0] in a_ids) / len(aligned)
+n = len(rows)
+if n > 1:
+    imps = [r[1] for r in rows]
+    acs = [r[2] for r in rows]
+    mean_i = sum(imps) / n
+    mean_a = sum(acs) / n
+    cov = sum((imps[j] - mean_i) * (acs[j] - mean_a) for j in range(n)) / n
+    std_i = math.sqrt(sum((x - mean_i)**2 for x in imps) / n) or 1
+    std_a = math.sqrt(sum((x - mean_a)**2 for x in acs) / n) or 1
+    correlation = cov / (std_i * std_a)
+else:
+    correlation = 0
+db.close()
+print(json.dumps({"total_entries": n, "drifted_count": len(drifted), "aligned_count": len(aligned), "drift_ratio": round(len(drifted) / n, 4) if n else 0, "avg_drifted_fitness": round(avg_drifted_fitness, 4), "avg_aligned_fitness": round(avg_aligned_fitness, 4), "importance_access_correlation": round(correlation, 4), "drift_detected": len(drifted) > 0, "high_drift_ratio": len(drifted) / n > 0.15 if n else False}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'importance-drift', error: `Importance drift detection failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'importance-drift', metrics: { ...result, hypotheses: ['EG_importance_drift_detection'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EH - Session Boundary Detection
+function benchSessionBoundary() {
+  const tmpDir = makeTmpDir('session-boundary');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'session-boundary', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let session = 0; session < 5; session++) {
+      const baseDay = session * 3;
+      for (let j = 0; j < 40; j++) {
+        const idx = session * 40 + j;
+        entries.push({ id: `sb_${idx}`, content: `session ${session} entry ${j} about ${['api', 'db', 'ui'][j % 3]}`, node_type: 'task_solution', importance: 3 + Math.random() * 5, access_count: 2 + Math.floor(Math.random() * 8), memory_layer: 'mutating', fitness: 0.4 + Math.random() * 0.4, generation: 2, version: 1, age_days: 30 - baseDay, last_access_days: 30 - baseDay - (j * 0.02) });
+      }
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json
+from datetime import datetime
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows=c.execute("SELECT id, accessed_at FROM nodes ORDER BY accessed_at").fetchall()
+timestamps = []
+for r in rows:
+    try:
+        timestamps.append((r[0], datetime.fromisoformat(r[1])))
+    except:
+        pass
+THRESHOLD_HOURS = 24
+gaps = []
+for i in range(1, len(timestamps)):
+    gap_seconds = abs((timestamps[i][1] - timestamps[i-1][1]).total_seconds())
+    gap_hours = gap_seconds / 3600.0
+    if gap_hours > THRESHOLD_HOURS:
+        gaps.append({"index": i, "gap_hours": round(gap_hours, 2), "before_id": timestamps[i-1][0], "after_id": timestamps[i][0]})
+detected_sessions = len(gaps) + 1
+session_sizes = []
+prev_idx = 0
+for g in gaps:
+    session_sizes.append(g["index"] - prev_idx)
+    prev_idx = g["index"]
+session_sizes.append(len(timestamps) - prev_idx)
+avg_session_size = sum(session_sizes) / len(session_sizes) if session_sizes else 0
+avg_gap_hours = sum(g["gap_hours"] for g in gaps) / len(gaps) if gaps else 0
+db.close()
+print(json.dumps({"total_entries": len(timestamps), "detected_boundaries": len(gaps), "detected_sessions": detected_sessions, "expected_sessions": 5, "session_detection_accurate": abs(detected_sessions - 5) <= 1, "avg_gap_hours": round(avg_gap_hours, 2), "avg_session_size": round(avg_session_size, 2), "session_sizes": session_sizes, "threshold_hours": THRESHOLD_HOURS}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'session-boundary', error: `Session boundary detection failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'session-boundary', metrics: { ...result, hypotheses: ['EH_session_boundary_detection'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EI - Node Degree Distribution
+function benchNodeDegreeDistribution() {
+  const tmpDir = makeTmpDir('degree-dist');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'degree-dist', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 200; i++) entries.push({ id: `dd_${i}`, content: `degree distribution entry ${i}`, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: 3 + Math.random() * 7, access_count: 1 + Math.floor(Math.random() * 20), memory_layer: i % 5 === 0 ? 'constant' : 'mutating', fitness: 0.2 + Math.random() * 0.7, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const rels = [];
+    for (let i = 0; i < 200; i++) {
+      const numRels = i < 5 ? 20 : (i < 20 ? 5 : (Math.random() < 0.3 ? 1 : 0));
+      for (let j = 0; j < numRels; j++) {
+        const target = (i + 1 + Math.floor(Math.random() * 199)) % 200;
+        if (target !== i) rels.push({ source: `dd_${i}`, target: `dd_${target}`, type: 'related_to' });
+      }
+    }
+    insertRelations(dbPath, rels);
+    const script = `
+import sqlite3,json,math,collections
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+degree = collections.Counter()
+for r in c.execute("SELECT source_id, target_id FROM relations").fetchall():
+    degree[r[0]] += 1
+    degree[r[1]] += 1
+all_ids = [r[0] for r in c.execute("SELECT id FROM nodes").fetchall()]
+degrees = [degree.get(nid, 0) for nid in all_ids]
+n = len(degrees)
+if n == 0:
+    db.close()
+    print(json.dumps({"error": "no nodes"}))
+else:
+    mean_deg = sum(degrees) / n
+    max_deg = max(degrees)
+    sorted_d = sorted(degrees)
+    cum = 0
+    gini_sum = 0
+    for i, d in enumerate(sorted_d):
+        cum += d
+        gini_sum += cum
+    gini = 1 - 2 * gini_sum / (n * sum(degrees)) if sum(degrees) > 0 else 0
+    top10_count = max(1, n // 10)
+    top10_degrees = sorted(degrees, reverse=True)[:top10_count]
+    top10_share = sum(top10_degrees) / sum(degrees) if sum(degrees) > 0 else 0
+    high_deg_ids = set()
+    low_deg_ids = set()
+    median_deg = sorted_d[n // 2]
+    for nid in all_ids:
+        if degree.get(nid, 0) > median_deg:
+            high_deg_ids.add(nid)
+        else:
+            low_deg_ids.add(nid)
+    high_rows = c.execute("SELECT AVG(access_count), AVG(fitness) FROM nodes WHERE id IN ({})".format(','.join('?' * len(high_deg_ids))), list(high_deg_ids)).fetchone()
+    low_rows = c.execute("SELECT AVG(access_count), AVG(fitness) FROM nodes WHERE id IN ({})".format(','.join('?' * len(low_deg_ids))), list(low_deg_ids)).fetchone()
+    db.close()
+    print(json.dumps({"total_nodes": n, "total_edges": sum(degrees) // 2, "mean_degree": round(mean_deg, 2), "max_degree": max_deg, "gini_coefficient": round(gini, 4), "top10_edge_share": round(top10_share, 4), "power_law_like": top10_share > 0.4, "high_deg_avg_access": round(high_rows[0] or 0, 2), "low_deg_avg_access": round(low_rows[0] or 0, 2), "high_deg_avg_fitness": round(high_rows[1] or 0, 4), "low_deg_avg_fitness": round(low_rows[1] or 0, 4), "degree_access_correlated": (high_rows[0] or 0) > (low_rows[0] or 0)}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'degree-dist', error: `Node degree distribution failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'degree-dist', metrics: { ...result, hypotheses: ['EI_node_degree_distribution'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EJ - Content Deduplication Gain
+function benchDeduplicationGain() {
+  const tmpDir = makeTmpDir('dedup-gain');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'dedup-gain', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    const baseContents = [
+      'Use async await for database queries to avoid blocking',
+      'Always validate user input before processing',
+      'Cache frequently accessed data in Redis',
+      'Write unit tests for all public API endpoints',
+      'Use environment variables for configuration secrets',
+      'Implement retry logic with exponential backoff',
+      'Log all errors with stack traces and context',
+      'Use connection pooling for database connections',
+    ];
+    for (let i = 0; i < 40; i++) {
+      const base = baseContents[i % baseContents.length];
+      entries.push({ id: `dg_orig_${i}`, content: base, node_type: 'task_solution', importance: 5 + Math.random() * 5, access_count: 5 + Math.floor(Math.random() * 10), memory_layer: 'constant', fitness: 0.6 + Math.random() * 0.3, generation: 2, version: 1 });
+      entries.push({ id: `dg_dup_${i}`, content: base + ` (variation ${i})`, node_type: 'task_solution', importance: 3 + Math.random() * 4, access_count: 1 + Math.floor(Math.random() * 3), memory_layer: 'mutating', fitness: 0.3 + Math.random() * 0.3, generation: 1, version: 1 });
+    }
+    for (let i = 0; i < 120; i++) entries.push({ id: `dg_uniq_${i}`, content: `unique entry ${i} about topic ${i % 20} with specific detail ${i * 7}`, node_type: 'insight', importance: 2 + Math.random() * 6, access_count: 1 + Math.floor(Math.random() * 10), memory_layer: 'mutating', fitness: 0.2 + Math.random() * 0.5, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows=c.execute("SELECT id, content, importance, fitness FROM nodes").fetchall()
+total_before = len(rows)
+total_bytes_before = sum(len(r[1]) for r in rows)
+def ngrams(text, n=3):
+    words = text.lower().split()
+    return set(tuple(words[i:i+n]) for i in range(len(words)-n+1)) if len(words) >= n else {tuple(words)}
+THRESHOLD = 0.6
+seen = {}
+duplicates = []
+unique = []
+for r in rows:
+    nid, content, imp, fit = r
+    ng = ngrams(content)
+    is_dup = False
+    for sid, sng in seen.items():
+        if not ng or not sng:
+            continue
+        intersection = len(ng & sng)
+        union = len(ng | sng)
+        jaccard = intersection / union if union > 0 else 0
+        if jaccard >= THRESHOLD:
+            duplicates.append(nid)
+            is_dup = True
+            break
+    if not is_dup:
+        seen[nid] = ng
+        unique.append(nid)
+total_after = len(unique)
+total_bytes_after = sum(len(r[1]) for r in rows if r[0] in set(unique))
+storage_savings_pct = (1 - total_bytes_after / total_bytes_before) * 100 if total_bytes_before > 0 else 0
+kept_fitness = [r[3] for r in rows if r[0] in set(unique)]
+removed_fitness = [r[3] for r in rows if r[0] in set(duplicates)]
+avg_kept = sum(kept_fitness) / len(kept_fitness) if kept_fitness else 0
+avg_removed = sum(removed_fitness) / len(removed_fitness) if removed_fitness else 0
+db.close()
+print(json.dumps({"total_before": total_before, "total_after": total_after, "duplicates_found": len(duplicates), "dedup_reduction_pct": round((1 - total_after / total_before) * 100, 2) if total_before else 0, "storage_savings_pct": round(storage_savings_pct, 2), "bytes_before": total_bytes_before, "bytes_after": total_bytes_after, "avg_kept_fitness": round(avg_kept, 4), "avg_removed_fitness": round(avg_removed, 4), "kept_fitness_higher": avg_kept > avg_removed}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'dedup-gain', error: `Content deduplication gain failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'dedup-gain', metrics: { ...result, hypotheses: ['EJ_content_deduplication_gain'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EK - Layered Cache Hierarchy
+function benchLayeredCacheHierarchy() {
+  const tmpDir = makeTmpDir('cache-hierarchy');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'cache-hierarchy', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 500; i++) {
+      const accessFreq = i < 50 ? 20 + Math.floor(Math.random() * 30) : (i < 200 ? 5 + Math.floor(Math.random() * 15) : 1 + Math.floor(Math.random() * 3));
+      entries.push({ id: `ch_${i}`, content: `cache hierarchy entry ${i} about ${['api', 'db', 'auth', 'ui', 'perf'][i % 5]}`, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: accessFreq > 15 ? 8 + Math.random() * 2 : (accessFreq > 5 ? 4 + Math.random() * 4 : 1 + Math.random() * 3), access_count: accessFreq, memory_layer: accessFreq > 15 ? 'constant' : 'mutating', fitness: 0.2 + Math.random() * 0.7, generation: 2, version: 1, last_access_days: accessFreq > 15 ? Math.floor(Math.random() * 3) : (accessFreq > 5 ? 3 + Math.floor(Math.random() * 10) : 15 + Math.floor(Math.random() * 30)) });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time,random
+from datetime import datetime
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+now=datetime.utcnow()
+rows=c.execute("SELECT id, access_count, fitness, accessed_at FROM nodes").fetchall()
+l1, l2, l3 = [], [], []
+for r in rows:
+    nid, ac, fit, acc_at = r
+    try:
+        days = (now - datetime.fromisoformat(acc_at)).days
+    except:
+        days = 30
+    if ac >= 15 and days <= 5:
+        l1.append(r)
+    elif ac >= 5 or days <= 15:
+        l2.append(r)
+    else:
+        l3.append(r)
+random.seed(42)
+queries = []
+for _ in range(200):
+    roll = random.random()
+    if roll < 0.6 and l1:
+        queries.append(random.choice(l1)[0])
+    elif roll < 0.9 and l2:
+        queries.append(random.choice(l2)[0])
+    elif l3:
+        queries.append(random.choice(l3)[0])
+    elif l1:
+        queries.append(random.choice(l1)[0])
+l1_ids = set(r[0] for r in l1)
+l2_ids = set(r[0] for r in l2)
+l3_ids = set(r[0] for r in l3)
+t0 = time.time()
+for qid in queries:
+    c.execute("SELECT id, fitness FROM nodes WHERE id=?", (qid,)).fetchone()
+flat_ms = (time.time() - t0) * 1000
+t0 = time.time()
+l1_hits = l2_hits = l3_hits = 0
+for qid in queries:
+    if qid in l1_ids:
+        l1_hits += 1
+    elif qid in l2_ids:
+        l2_hits += 1
+    else:
+        l3_hits += 1
+    c.execute("SELECT id, fitness FROM nodes WHERE id=?", (qid,)).fetchone()
+tiered_ms = (time.time() - t0) * 1000
+avg_l1_fitness = sum(r[2] for r in l1) / len(l1) if l1 else 0
+avg_l2_fitness = sum(r[2] for r in l2) / len(l2) if l2 else 0
+avg_l3_fitness = sum(r[2] for r in l3) / len(l3) if l3 else 0
+db.close()
+print(json.dumps({"total_entries": len(rows), "l1_hot_count": len(l1), "l2_warm_count": len(l2), "l3_cold_count": len(l3), "l1_hits": l1_hits, "l2_hits": l2_hits, "l3_hits": l3_hits, "l1_hit_rate_pct": round(l1_hits / len(queries) * 100, 2) if queries else 0, "flat_ms": round(flat_ms, 2), "tiered_ms": round(tiered_ms, 2), "avg_l1_fitness": round(avg_l1_fitness, 4), "avg_l2_fitness": round(avg_l2_fitness, 4), "avg_l3_fitness": round(avg_l3_fitness, 4), "l1_fitness_highest": avg_l1_fitness > avg_l2_fitness and avg_l1_fitness > avg_l3_fitness}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'cache-hierarchy', error: `Layered cache hierarchy failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'cache-hierarchy', metrics: { ...result, hypotheses: ['EK_layered_cache_hierarchy'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EL - Fitness Score Distribution
+function benchFitnessScoreDistribution() {
+  const tmpDir = makeTmpDir('fitness-dist');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'fitness-dist', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 400; i++) {
+      const isHigh = i % 3 === 0;
+      entries.push({ id: `fd_${i}`, content: `fitness distribution entry ${i} about ${['api', 'db', 'auth', 'test', 'deploy'][i % 5]}`, node_type: ['task_solution', 'insight', 'error_pattern', 'workflow_routing'][i % 4], importance: isHigh ? 6 + Math.random() * 4 : 1 + Math.random() * 4, access_count: isHigh ? 8 + Math.floor(Math.random() * 15) : 1 + Math.floor(Math.random() * 4), memory_layer: isHigh ? 'constant' : 'mutating', fitness: isHigh ? 0.7 + Math.random() * 0.3 : 0.05 + Math.random() * 0.3, generation: 2, version: 1 });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,math
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+fitnesses=c.execute("SELECT fitness FROM nodes ORDER BY fitness").fetchall()
+vals=[r[0] for r in fitnesses]
+n=len(vals)
+mean_f=sum(vals)/n
+var_f=sum((x-mean_f)**2 for x in vals)/n
+std_f=math.sqrt(var_f) if var_f > 0 else 0.001
+skew=sum(((x-mean_f)/std_f)**3 for x in vals)/n if std_f > 0 else 0
+kurt=sum(((x-mean_f)/std_f)**4 for x in vals)/n - 3 if std_f > 0 else 0
+bins=[0]*10
+for v in vals:
+    b=min(int(v*10),9)
+    bins[b]+=1
+peaks=[]
+for i in range(len(bins)):
+    left=bins[i-1] if i>0 else 0
+    right=bins[i+1] if i<len(bins)-1 else 0
+    if bins[i]>left and bins[i]>right:
+        peaks.append(i)
+is_bimodal=len(peaks)>=2
+p10=vals[n//10]
+p25=vals[n//4]
+p50=vals[n//2]
+p75=vals[3*n//4]
+p90=vals[9*n//10]
+threshold=vals[int(n*0.8)]
+top20_access=c.execute("SELECT AVG(access_count) FROM nodes WHERE fitness>=?", (threshold,)).fetchone()[0]
+bot80_access=c.execute("SELECT AVG(access_count) FROM nodes WHERE fitness<?", (threshold,)).fetchone()[0]
+selection_ratio=(top20_access or 0)/(bot80_access or 1)
+db.close()
+print(json.dumps({"total_entries":n,"mean_fitness":round(mean_f,4),"std_fitness":round(std_f,4),"skewness":round(skew,4),"kurtosis":round(kurt,4),"p10":round(p10,4),"p25":round(p25,4),"p50_median":round(p50,4),"p75":round(p75,4),"p90":round(p90,4),"bin_counts":bins,"peaks":peaks,"is_bimodal":is_bimodal,"distribution_type":"bimodal" if is_bimodal else ("skewed" if abs(skew)>0.5 else "normal-like"),"top20_avg_access":round(top20_access or 0,2),"bot80_avg_access":round(bot80_access or 0,2),"selection_quality_ratio":round(selection_ratio,4),"selection_effective":selection_ratio>2.0}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'fitness-dist', error: `Fitness score distribution failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'fitness-dist', metrics: { ...result, hypotheses: ['EL_fitness_score_distribution'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Round 18: EM-ET ────────────────────────────────────────────────────────
+
+// EM - Aging Curve Optimization
+function benchAgingCurve() {
+  const tmpDir = makeTmpDir('aging-curve');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'aging-curve', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    const now = Date.now();
+    for (let i = 0; i < 400; i++) {
+      const ageDays = Math.floor(Math.random() * 180);
+      const createdAt = new Date(now - ageDays * 86400000).toISOString();
+      entries.push({ id: `ac_${i}`, content: `aging curve entry ${i} about ${['database', 'api', 'auth', 'ui', 'test'][i % 5]} task`, node_type: ['task_solution', 'insight', 'error_pattern', 'workflow_routing'][i % 4], importance: 2 + Math.random() * 8, access_count: Math.floor(Math.random() * 25), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,math,random
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows = c.execute("SELECT id, importance, access_count, fitness, node_type FROM nodes").fetchall()
+random.seed(42)
+half_lives = [7, 14, 30, 60, 90]
+floors = [0.05, 0.1, 0.2, 0.3]
+best_config = None
+best_score = -1
+results_grid = []
+for hl in half_lives:
+    for floor in floors:
+        scores = []
+        for nid, imp, ac, fit, ntype in rows:
+            age_days = random.randint(0, 180)
+            decay = max(floor, math.exp(-0.693 * age_days / hl))
+            adjusted = fit * 0.4 + (imp / 10.0) * 0.3 + decay * 0.3
+            useful = 1 if ac > 3 else 0
+            scores.append((adjusted, useful))
+        scores.sort(key=lambda x: -x[0])
+        top50 = scores[:50]
+        precision = sum(s[1] for s in top50) / 50.0 if top50 else 0
+        score = precision
+        results_grid.append({"half_life": hl, "floor": floor, "precision_at_50": round(precision, 4)})
+        if score > best_score:
+            best_score = score
+            best_config = {"half_life": hl, "floor": floor}
+type_best = {}
+for ntype in ['task_solution', 'insight', 'error_pattern', 'workflow_routing']:
+    type_rows = [(nid, imp, ac, fit) for nid, imp, ac, fit, nt in rows if nt == ntype]
+    best_hl = 30
+    best_p = -1
+    for hl in half_lives:
+        scs = []
+        for nid, imp, ac, fit in type_rows:
+            age_days = random.randint(0, 180)
+            decay = max(0.1, math.exp(-0.693 * age_days / hl))
+            adj = fit * 0.4 + (imp / 10.0) * 0.3 + decay * 0.3
+            useful = 1 if ac > 3 else 0
+            scs.append((adj, useful))
+        scs.sort(key=lambda x: -x[0])
+        top20 = scs[:20]
+        p = sum(s[1] for s in top20) / 20.0 if top20 else 0
+        if p > best_p:
+            best_p = p
+            best_hl = hl
+    type_best[ntype] = {"best_half_life": best_hl, "precision": round(best_p, 4)}
+db.close()
+print(json.dumps({"total_entries": len(rows),"configs_tested": len(results_grid),"best_half_life": best_config["half_life"],"best_floor": best_config["floor"],"best_precision_at_50": round(best_score, 4),"type_specific_half_lives": type_best,"types_differ": len(set(v["best_half_life"] for v in type_best.values())) > 1}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'aging-curve', error: `Aging curve failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'aging-curve', metrics: { ...result, hypotheses: ['EM_aging_curve_optimization'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EN - Relation Graph Diameter
+function benchRelationGraphDiameter() {
+  const tmpDir = makeTmpDir('rel-graph-diam');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'rel-graph-diam', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 200; i++) entries.push({ id: `rgd_${i}`, content: `graph diameter node ${i} about ${['db', 'api', 'auth', 'ui'][i % 4]}`, node_type: ['task_solution', 'insight'][i % 2], importance: 3 + Math.random() * 7, access_count: Math.floor(Math.random() * 15), memory_layer: ['mutating', 'constant'][i % 2], fitness: 0.3 + Math.random() * 0.6, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const rels = [];
+    for (let i = 0; i < 150; i++) rels.push({ source: `rgd_${i}`, target: `rgd_${(i + 1) % 200}`, type: 'relates_to' });
+    for (let i = 0; i < 80; i++) rels.push({ source: `rgd_${i * 2}`, target: `rgd_${Math.min(i * 2 + 10, 199)}`, type: 'depends_on' });
+    insertRelations(dbPath, rels);
+    const script = `
+import sqlite3,json,time,collections
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+edges = c.execute("SELECT source_id, target_id FROM relations").fetchall()
+adj = collections.defaultdict(set)
+for s, t in edges:
+    adj[s].add(t)
+    adj[t].add(s)
+all_nodes = list(adj.keys())
+def bfs_distances(start):
+    dist = {start: 0}
+    queue = collections.deque([start])
+    while queue:
+        node = queue.popleft()
+        for nb in adj[node]:
+            if nb not in dist:
+                dist[nb] = dist[node] + 1
+                queue.append(nb)
+    return dist
+sample = all_nodes[:min(50, len(all_nodes))]
+eccentricities = []
+for s in sample:
+    dists = bfs_distances(s)
+    if dists:
+        eccentricities.append(max(dists.values()))
+diameter = max(eccentricities) if eccentricities else 0
+radius = min(eccentricities) if eccentricities else 0
+avg_ecc = sum(eccentricities) / len(eccentricities) if eccentricities else 0
+t0 = time.time()
+short_queries = [n for n in sample[:10]]
+short_total = 0
+for s in short_queries:
+    for t in short_queries:
+        d = bfs_distances(s)
+        if t in d:
+            short_total += d[t]
+short_ms = (time.time() - t0) * 1000
+total_nodes = c.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+total_rels = c.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+density = (2.0 * total_rels) / (total_nodes * (total_nodes - 1)) if total_nodes > 1 else 0
+db.close()
+print(json.dumps({"diameter": diameter,"radius": radius,"avg_eccentricity": round(avg_ecc, 2),"graph_density": round(density, 6),"connected_nodes": len(all_nodes),"total_nodes": total_nodes,"total_relations": total_rels,"bfs_sample_ms": round(short_ms, 2),"diameter_exceeds_6": diameter > 6}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'rel-graph-diam', error: `Graph diameter failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'rel-graph-diam', metrics: { ...result, hypotheses: ['EN_relation_graph_diameter'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EO - Parallel Query Benefit
+function benchParallelQueryBenefit() {
+  const tmpDir = makeTmpDir('parallel-query');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'parallel-query', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 600; i++) entries.push({ id: `pq_${i}`, content: `parallel query entry ${i} about ${['database', 'api', 'auth', 'ui', 'test', 'deploy'][i % 6]} work`, node_type: ['task_solution', 'insight', 'error_pattern', 'workflow_routing'][i % 4], importance: Math.random() * 10, access_count: Math.floor(Math.random() * 20), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time,concurrent.futures,os
+db_path = ${JSON.stringify(dbPath.replace(/\\/g, '/'))}
+queries = [
+    "SELECT id, content, fitness FROM nodes WHERE memory_layer='mutating' ORDER BY fitness DESC LIMIT 20",
+    "SELECT id, content, fitness FROM nodes WHERE node_type='task_solution' ORDER BY importance DESC LIMIT 20",
+    "SELECT id, content, fitness FROM nodes WHERE memory_layer='constant' AND fitness > 0.3 ORDER BY fitness DESC LIMIT 20",
+    "SELECT id, content, fitness FROM nodes WHERE node_type='insight' ORDER BY access_count DESC LIMIT 20",
+    "SELECT id, content, fitness FROM nodes WHERE importance > 5 ORDER BY fitness DESC LIMIT 20",
+    "SELECT id, content, fitness FROM nodes WHERE memory_layer='file' ORDER BY fitness DESC LIMIT 20",
+]
+ITERS = 100
+db = sqlite3.connect(db_path)
+t0 = time.time()
+for _ in range(ITERS):
+    for q in queries:
+        db.execute(q).fetchall()
+sequential_ms = (time.time() - t0) * 1000
+db.close()
+def run_query_batch(q):
+    conn = sqlite3.connect(db_path)
+    for _ in range(ITERS):
+        conn.execute(q).fetchall()
+    conn.close()
+    return True
+t0 = time.time()
+with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries), 4)) as ex:
+    futs = [ex.submit(run_query_batch, q) for q in queries]
+    concurrent.futures.wait(futs)
+parallel_ms = (time.time() - t0) * 1000
+speedup = sequential_ms / parallel_ms if parallel_ms > 0 else 1.0
+theoretical_max = len(queries)
+efficiency = (speedup / theoretical_max) * 100 if theoretical_max > 0 else 0
+print(json.dumps({"num_queries": len(queries),"iterations": ITERS,"sequential_ms": round(sequential_ms, 2),"parallel_ms": round(parallel_ms, 2),"speedup_factor": round(speedup, 2),"theoretical_max_speedup": theoretical_max,"parallel_efficiency_pct": round(efficiency, 2),"parallel_faster": parallel_ms < sequential_ms}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 20000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'parallel-query', error: `Parallel query failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'parallel-query', metrics: { ...result, hypotheses: ['EO_parallel_query_benefit'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EP - Entry Size vs Utility
+function benchEntrySizeUtility() {
+  const tmpDir = makeTmpDir('entry-size-util');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'entry-size-util', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 300; i++) {
+      const sizeCategory = i % 3;
+      let content;
+      if (sizeCategory === 0) content = `short entry ${i}`;
+      else if (sizeCategory === 1) content = `medium entry ${i}: ` + 'detailed explanation of the implementation approach for this particular feature including edge cases and error handling. '.repeat(3);
+      else content = `long entry ${i}: ` + 'very detailed comprehensive documentation covering architecture decisions, implementation details, testing strategies, deployment considerations, performance implications, security concerns, and maintenance procedures for the system component. '.repeat(8);
+      const accessCount = sizeCategory === 1 ? 5 + Math.floor(Math.random() * 15) : (sizeCategory === 0 ? 1 + Math.floor(Math.random() * 5) : 2 + Math.floor(Math.random() * 8));
+      entries.push({ id: `esu_${i}`, content, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: 3 + Math.random() * 7, access_count: accessCount, memory_layer: ['mutating', 'constant'][i % 2], fitness: 0.2 + Math.random() * 0.7, generation: 2, version: 1 });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,statistics
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows = c.execute("SELECT id, content, access_count, importance, fitness FROM nodes").fetchall()
+short, medium, long_ = [], [], []
+for nid, content, ac, imp, fit in rows:
+    size = len(content)
+    entry = {"id": nid, "size": size, "access_count": ac, "importance": imp, "fitness": fit, "utility": ac * 0.5 + imp * 0.3 + fit * 0.2}
+    if size < 50:
+        short.append(entry)
+    elif size < 500:
+        medium.append(entry)
+    else:
+        long_.append(entry)
+def stats(group):
+    if not group:
+        return {"count": 0, "avg_size": 0, "avg_utility": 0, "avg_access": 0}
+    return {
+        "count": len(group),
+        "avg_size": round(statistics.mean(e["size"] for e in group), 1),
+        "avg_utility": round(statistics.mean(e["utility"] for e in group), 4),
+        "avg_access": round(statistics.mean(e["access_count"] for e in group), 2)
+    }
+sizes = [len(content) for _, content, _, _, _ in rows]
+utilities = [ac * 0.5 + imp * 0.3 + fit * 0.2 for _, _, ac, imp, fit in rows]
+n = len(sizes)
+mean_s = sum(sizes) / n
+mean_u = sum(utilities) / n
+cov = sum((sizes[i] - mean_s) * (utilities[i] - mean_u) for i in range(n)) / n
+std_s = (sum((s - mean_s) ** 2 for s in sizes) / n) ** 0.5
+std_u = (sum((u - mean_u) ** 2 for u in utilities) / n) ** 0.5
+correlation = cov / (std_s * std_u) if std_s > 0 and std_u > 0 else 0
+utility_per_byte_short = stats(short)["avg_utility"] / max(stats(short)["avg_size"], 1)
+utility_per_byte_medium = stats(medium)["avg_utility"] / max(stats(medium)["avg_size"], 1)
+utility_per_byte_long = stats(long_)["avg_utility"] / max(stats(long_)["avg_size"], 1)
+db.close()
+print(json.dumps({"total_entries": n,"short": stats(short),"medium": stats(medium),"long": stats(long_),"size_utility_correlation": round(correlation, 4),"utility_per_byte_short": round(utility_per_byte_short, 6),"utility_per_byte_medium": round(utility_per_byte_medium, 6),"utility_per_byte_long": round(utility_per_byte_long, 6),"medium_most_efficient": utility_per_byte_medium > utility_per_byte_short and utility_per_byte_medium > utility_per_byte_long}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'entry-size-util', error: `Entry size utility failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'entry-size-util', metrics: { ...result, hypotheses: ['EP_entry_size_vs_utility'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EQ - Orphan Node Detection
+function benchOrphanNodeDetection() {
+  const tmpDir = makeTmpDir('orphan-detect');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'orphan-detect', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 200; i++) entries.push({ id: `orph_${i}`, content: `orphan detection entry ${i} about ${['database', 'api', 'auth', 'ui'][i % 4]} work`, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: 2 + Math.random() * 8, access_count: Math.floor(Math.random() * 20), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: 0.2 + Math.random() * 0.7, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const rels = [];
+    for (let i = 0; i < 100; i++) rels.push({ source: `orph_${i}`, target: `orph_${100 + (i % 50)}`, type: ['relates_to', 'depends_on', 'supersedes'][i % 3] });
+    for (let i = 0; i < 30; i++) rels.push({ source: `orph_${i}`, target: `orph_${i + 1}`, type: 'relates_to' });
+    insertRelations(dbPath, rels);
+    const script = `
+import sqlite3,json,statistics
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+all_nodes = c.execute("SELECT id, importance, access_count, fitness FROM nodes").fetchall()
+connected_ids = set()
+for row in c.execute("SELECT source_id, target_id FROM relations").fetchall():
+    connected_ids.add(row[0])
+    connected_ids.add(row[1])
+orphans = []
+connected = []
+for nid, imp, ac, fit in all_nodes:
+    entry = {"id": nid, "importance": imp, "access_count": ac, "fitness": fit}
+    if nid in connected_ids:
+        connected.append(entry)
+    else:
+        orphans.append(entry)
+def group_stats(group):
+    if not group:
+        return {"count": 0, "avg_importance": 0, "avg_access": 0, "avg_fitness": 0}
+    return {
+        "count": len(group),
+        "avg_importance": round(statistics.mean(e["importance"] for e in group), 4),
+        "avg_access": round(statistics.mean(e["access_count"] for e in group), 4),
+        "avg_fitness": round(statistics.mean(e["fitness"] for e in group), 4)
+    }
+orphan_stats = group_stats(orphans)
+connected_stats = group_stats(connected)
+orphan_pct = len(orphans) / len(all_nodes) * 100 if all_nodes else 0
+low_value_orphans = [o for o in orphans if o["access_count"] < 3 and o["fitness"] < 0.4]
+safe_to_prune = len(low_value_orphans)
+db.close()
+print(json.dumps({"total_nodes": len(all_nodes),"orphan_count": len(orphans),"connected_count": len(connected),"orphan_pct": round(orphan_pct, 2),"orphan_stats": orphan_stats,"connected_stats": connected_stats,"safe_to_prune": safe_to_prune,"connected_higher_fitness": connected_stats["avg_fitness"] > orphan_stats["avg_fitness"]}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'orphan-detect', error: `Orphan detection failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'orphan-detect', metrics: { ...result, hypotheses: ['EQ_orphan_node_detection'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ER - Fitness Momentum
+function benchFitnessMomentum() {
+  const tmpDir = makeTmpDir('fitness-momentum');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'fitness-momentum', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 200; i++) {
+      const rising = i < 100;
+      entries.push({ id: `fm_${i}`, content: `fitness momentum entry ${i} ${rising ? 'rapidly improving' : 'stable low'} pattern`, node_type: ['task_solution', 'insight'][i % 2], importance: 3 + Math.random() * 7, access_count: rising ? 10 + Math.floor(Math.random() * 15) : 1 + Math.floor(Math.random() * 3), memory_layer: 'mutating', fitness: rising ? 0.5 + i * 0.004 : 0.2 + Math.random() * 0.15, generation: rising ? 3 + Math.floor(i / 20) : 2, version: rising ? 2 + Math.floor(i / 25) : 1 });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,statistics
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows = c.execute("SELECT id, fitness, access_count, generation, version FROM nodes").fetchall()
+rising = [(nid, fit, ac, gen, ver) for nid, fit, ac, gen, ver in rows if nid.startswith('fm_') and int(nid.split('_')[1]) < 100]
+stable = [(nid, fit, ac, gen, ver) for nid, fit, ac, gen, ver in rows if nid.startswith('fm_') and int(nid.split('_')[1]) >= 100]
+def momentum_score(fit, ac, gen, ver):
+    access_vel = min(ac / 10.0, 2.0)
+    gen_factor = min(gen / 5.0, 1.5)
+    ver_factor = min(ver / 3.0, 1.5)
+    return fit * 0.3 + access_vel * 0.3 + gen_factor * 0.2 + ver_factor * 0.2
+rising_scores = [momentum_score(f, ac, g, v) for _, f, ac, g, v in rising]
+stable_scores = [momentum_score(f, ac, g, v) for _, f, ac, g, v in stable]
+avg_rising = statistics.mean(rising_scores) if rising_scores else 0
+avg_stable = statistics.mean(stable_scores) if stable_scores else 0
+high_momentum = [s for s in rising_scores if s > 0.7]
+predicted_high = len(high_momentum)
+actual_high_fitness = len([1 for _, f, _, _, _ in rising if f > 0.7])
+prediction_accuracy = predicted_high / max(actual_high_fitness, 1)
+momentum_ratio = avg_rising / avg_stable if avg_stable > 0 else 0
+db.close()
+print(json.dumps({"rising_count": len(rising),"stable_count": len(stable),"avg_rising_momentum": round(avg_rising, 4),"avg_stable_momentum": round(avg_stable, 4),"momentum_ratio": round(momentum_ratio, 4),"predicted_high_fitness": predicted_high,"actual_high_fitness": actual_high_fitness,"prediction_accuracy": round(prediction_accuracy, 4),"momentum_predicts_fitness": momentum_ratio > 1.5}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'fitness-momentum', error: `Fitness momentum failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'fitness-momentum', metrics: { ...result, hypotheses: ['ER_fitness_momentum'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ES - Context Window Waste
+function benchContextWindowWaste() {
+  const tmpDir = makeTmpDir('ctx-waste');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'ctx-waste', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 500; i++) entries.push({ id: `cw_${i}`, content: `context window entry ${i} about ${['database', 'api', 'auth', 'ui', 'test'][i % 5]} implementation details`, node_type: ['task_solution', 'insight', 'error_pattern', 'workflow_routing'][i % 4], importance: Math.random() * 10, access_count: Math.floor(Math.random() * 25), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,random
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows = c.execute("SELECT id, content, fitness, access_count, importance, memory_layer FROM nodes ORDER BY fitness DESC").fetchall()
+CONTEXT_BUDGET = 100
+random.seed(42)
+loaded_top = rows[:CONTEXT_BUDGET]
+actually_used = set()
+for _ in range(50):
+    query_type = random.choice(['database', 'api', 'auth', 'ui', 'test'])
+    for nid, content, fit, ac, imp, layer in loaded_top:
+        if query_type in content:
+            actually_used.add(nid)
+used_count = len(actually_used)
+waste_count = CONTEXT_BUDGET - used_count
+waste_pct = (waste_count / CONTEXT_BUDGET) * 100
+used_fitness = []
+unused_fitness = []
+for nid, content, fit, ac, imp, layer in loaded_top:
+    if nid in actually_used:
+        used_fitness.append(fit)
+    else:
+        unused_fitness.append(fit)
+avg_used_fitness = sum(used_fitness) / len(used_fitness) if used_fitness else 0
+avg_unused_fitness = sum(unused_fitness) / len(unused_fitness) if unused_fitness else 0
+by_layer = {}
+for nid, content, fit, ac, imp, layer in loaded_top:
+    if layer not in by_layer:
+        by_layer[layer] = {"loaded": 0, "used": 0}
+    by_layer[layer]["loaded"] += 1
+    if nid in actually_used:
+        by_layer[layer]["used"] += 1
+layer_efficiency = {k: round(v["used"] / v["loaded"] * 100, 2) if v["loaded"] > 0 else 0 for k, v in by_layer.items()}
+random_loaded = random.sample(rows, min(CONTEXT_BUDGET, len(rows)))
+random_used = set()
+for _ in range(50):
+    query_type = random.choice(['database', 'api', 'auth', 'ui', 'test'])
+    for nid, content, fit, ac, imp, layer in random_loaded:
+        if query_type in content:
+            random_used.add(nid)
+random_waste_pct = ((CONTEXT_BUDGET - len(random_used)) / CONTEXT_BUDGET) * 100
+db.close()
+print(json.dumps({"context_budget": CONTEXT_BUDGET,"loaded": CONTEXT_BUDGET,"actually_used": used_count,"wasted": waste_count,"waste_pct": round(waste_pct, 2),"avg_used_fitness": round(avg_used_fitness, 4),"avg_unused_fitness": round(avg_unused_fitness, 4),"layer_efficiency": layer_efficiency,"random_waste_pct": round(random_waste_pct, 2),"fitness_reduces_waste": waste_pct < random_waste_pct}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'ctx-waste', error: `Context waste failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'ctx-waste', metrics: { ...result, hypotheses: ['ES_context_window_waste'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ET - Promotion Threshold Sensitivity
+function benchPromotionThresholdSensitivity() {
+  const tmpDir = makeTmpDir('promo-threshold');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'promo-threshold', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 400; i++) {
+      const isHighValue = i < 120;
+      entries.push({ id: `pt_${i}`, content: `promotion threshold entry ${i} ${isHighValue ? 'high value frequently accessed' : 'low value rarely used'}`, node_type: ['task_solution', 'insight', 'error_pattern', 'workflow_routing'][i % 4], importance: isHighValue ? 6 + Math.random() * 4 : 1 + Math.random() * 4, access_count: isHighValue ? 8 + Math.floor(Math.random() * 15) : Math.floor(Math.random() * 5), memory_layer: 'mutating', fitness: isHighValue ? 0.6 + Math.random() * 0.35 : 0.1 + Math.random() * 0.4, generation: 2, version: 1 });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows = c.execute("SELECT id, fitness, importance, access_count FROM nodes").fetchall()
+high_value_ids = set(nid for nid, _, _, _ in rows if int(nid.split('_')[1]) < 120)
+thresholds = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+results_by_threshold = []
+for thresh in thresholds:
+    promoted = set(nid for nid, fit, _, _ in rows if fit >= thresh)
+    true_positives = len(promoted & high_value_ids)
+    false_positives = len(promoted - high_value_ids)
+    false_negatives = len(high_value_ids - promoted)
+    precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+    recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+    results_by_threshold.append({
+        "threshold": thresh,
+        "promoted_count": len(promoted),
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4)
+    })
+best = max(results_by_threshold, key=lambda x: x["f1"])
+lowest_thresh = results_by_threshold[0]
+highest_thresh = results_by_threshold[-1]
+sensitivity = abs(lowest_thresh["f1"] - highest_thresh["f1"])
+db.close()
+print(json.dumps({"total_entries": len(rows),"high_value_count": len(high_value_ids),"thresholds_tested": len(thresholds),"results": results_by_threshold,"best_threshold": best["threshold"],"best_f1": best["f1"],"best_precision": best["precision"],"best_recall": best["recall"],"sensitivity_range": round(sensitivity, 4),"threshold_matters": sensitivity > 0.1}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'promo-threshold', error: `Promotion threshold failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'promo-threshold', metrics: { ...result, hypotheses: ['ET_promotion_threshold_sensitivity'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// ─── Round 19: EU-FB ────────────────────────────────────────────────────────
+
+// EU - Relation Type Specialization
+function benchRelationTypeSpecialization() {
+  const tmpDir = makeTmpDir('rel-type-spec');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'rel-type-spec', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 300; i++) entries.push({ id: `rts_${i}`, content: `relation type specialization entry ${i} about ${['database', 'api', 'auth', 'ui', 'testing'][i % 5]} module`, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: 3 + Math.random() * 7, access_count: 1 + Math.floor(Math.random() * 20), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: 0.2 + Math.random() * 0.7, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const relations = [];
+    const relTypes = ['depends_on', 'relates_to', 'derived_from'];
+    for (let i = 0; i < 600; i++) {
+      const src = `rts_${Math.floor(Math.random() * 300)}`;
+      let tgt = `rts_${Math.floor(Math.random() * 300)}`;
+      if (src === tgt) tgt = `rts_${(parseInt(src.split('_')[1]) + 1) % 300}`;
+      relations.push({ source: src, target: tgt, type: relTypes[i % 3] });
+    }
+    insertRelations(dbPath, relations);
+    const script = `
+import sqlite3,json,statistics
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rel_types = ['depends_on', 'relates_to', 'derived_from']
+type_metrics = {}
+for rt in rel_types:
+    rows = c.execute("""
+        SELECT DISTINCT n.id, n.fitness, n.importance, n.access_count
+        FROM nodes n
+        JOIN relations r ON n.id = r.target_id
+        WHERE r.relation_type = ?
+        ORDER BY n.fitness DESC LIMIT 50
+    """, (rt,)).fetchall()
+    if rows:
+        fitnesses = [r[1] for r in rows]
+        importances = [r[2] for r in rows]
+        accesses = [r[3] for r in rows]
+        type_metrics[rt] = {
+            "count": len(rows),
+            "avg_fitness": round(statistics.mean(fitnesses), 4),
+            "avg_importance": round(statistics.mean(importances), 4),
+            "avg_access": round(statistics.mean(accesses), 2),
+            "fitness_stdev": round(statistics.stdev(fitnesses), 4) if len(fitnesses) > 1 else 0
+        }
+    else:
+        type_metrics[rt] = {"count": 0, "avg_fitness": 0, "avg_importance": 0, "avg_access": 0, "fitness_stdev": 0}
+best_type = max(type_metrics.items(), key=lambda x: x[1]["avg_fitness"])
+worst_type = min(type_metrics.items(), key=lambda x: x[1]["avg_fitness"])
+spread = round(best_type[1]["avg_fitness"] - worst_type[1]["avg_fitness"], 4)
+db.close()
+print(json.dumps({"type_metrics": type_metrics, "best_type": best_type[0], "worst_type": worst_type[0], "fitness_spread": spread, "types_differ": spread > 0.02}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'rel-type-spec', error: `Relation type specialization failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'rel-type-spec', metrics: { ...result, hypotheses: ['EU_relation_type_specialization'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EV - Access Pattern Prediction
+function benchAccessPatternPrediction() {
+  const tmpDir = makeTmpDir('access-predict');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'access-predict', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 200; i++) entries.push({ id: `ap_${i}`, content: `access prediction entry ${i} for ${['auth', 'database', 'api', 'frontend', 'config'][i % 5]} workflow`, node_type: ['task_solution', 'insight', 'workflow_routing'][i % 3], importance: 2 + Math.random() * 8, access_count: 1 + Math.floor(Math.random() * 30), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: 0.2 + Math.random() * 0.7, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,random
+from collections import defaultdict
+random.seed(42)
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+ids = [r[0] for r in c.execute("SELECT id FROM nodes ORDER BY access_count DESC LIMIT 50").fetchall()]
+if len(ids) < 5:
+    db.close()
+    print(json.dumps({"error": "too few nodes"}))
+else:
+    SEQ_LEN = 500
+    sequence = []
+    for _ in range(SEQ_LEN):
+        sequence.append(random.choice(ids))
+    transitions = defaultdict(lambda: defaultdict(int))
+    for i in range(len(sequence) - 1):
+        transitions[sequence[i]][sequence[i+1]] += 1
+    markov = {}
+    for src, targets in transitions.items():
+        total = sum(targets.values())
+        markov[src] = {t: cnt / total for t, cnt in sorted(targets.items(), key=lambda x: -x[1])[:5]}
+    TRAIN = int(SEQ_LEN * 0.8)
+    train_seq = sequence[:TRAIN]
+    test_seq = sequence[TRAIN:]
+    train_trans = defaultdict(lambda: defaultdict(int))
+    for i in range(len(train_seq) - 1):
+        train_trans[train_seq[i]][train_seq[i+1]] += 1
+    train_markov = {}
+    for src, targets in train_trans.items():
+        total = sum(targets.values())
+        best = max(targets.items(), key=lambda x: x[1])
+        train_markov[src] = best[0]
+    hits = 0
+    top3_hits = 0
+    predictions = 0
+    for i in range(len(test_seq) - 1):
+        curr = test_seq[i]
+        actual_next = test_seq[i+1]
+        if curr in train_trans:
+            predictions += 1
+            targets = train_trans[curr]
+            best = max(targets, key=targets.get)
+            if best == actual_next:
+                hits += 1
+            top3 = sorted(targets.keys(), key=lambda x: -targets[x])[:3]
+            if actual_next in top3:
+                top3_hits += 1
+    accuracy = round(hits / max(predictions, 1), 4)
+    top3_accuracy = round(top3_hits / max(predictions, 1), 4)
+    random_baseline = round(1.0 / len(ids), 4)
+    lift = round(accuracy / max(random_baseline, 0.0001), 2)
+    db.close()
+    print(json.dumps({"sequence_length": SEQ_LEN, "unique_ids": len(ids), "predictions_made": predictions, "top1_accuracy": accuracy, "top3_accuracy": top3_accuracy, "random_baseline": random_baseline, "prediction_lift": lift, "markov_useful": accuracy > random_baseline}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'access-predict', error: `Access pattern prediction failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'access-predict', metrics: { ...result, hypotheses: ['EV_access_pattern_prediction'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EW - Node Type Transition
+function benchNodeTypeTransition() {
+  const tmpDir = makeTmpDir('type-transition');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'type-transition', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    const typeChain = ['insight', 'error_pattern', 'task_solution', 'workflow_routing'];
+    for (let i = 0; i < 200; i++) {
+      const stage = Math.floor(i / 50);
+      entries.push({ id: `tt_${i}`, content: `type transition entry ${i} tracking evolution of ${['api', 'auth', 'db', 'cache'][i % 4]} knowledge`, node_type: typeChain[stage % typeChain.length], importance: 2 + stage * 2 + Math.random() * 2, access_count: 1 + stage * 3 + Math.floor(Math.random() * 5), memory_layer: stage >= 2 ? 'constant' : 'mutating', fitness: 0.2 + stage * 0.15 + Math.random() * 0.2, generation: stage + 1, version: stage + 1 });
+    }
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,statistics
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+type_chain = ['insight', 'error_pattern', 'task_solution', 'workflow_routing']
+type_stats = {}
+for nt in type_chain:
+    rows = c.execute("SELECT fitness, importance, access_count, generation FROM nodes WHERE node_type=?", (nt,)).fetchall()
+    if rows:
+        type_stats[nt] = {
+            "count": len(rows),
+            "avg_fitness": round(statistics.mean([r[0] for r in rows]), 4),
+            "avg_importance": round(statistics.mean([r[1] for r in rows]), 4),
+            "avg_access": round(statistics.mean([r[2] for r in rows]), 2),
+            "avg_generation": round(statistics.mean([r[3] for r in rows]), 2)
+        }
+    else:
+        type_stats[nt] = {"count": 0, "avg_fitness": 0, "avg_importance": 0, "avg_access": 0, "avg_generation": 0}
+monotonic_fitness = all(
+    type_stats[type_chain[i]]["avg_fitness"] <= type_stats[type_chain[i+1]]["avg_fitness"]
+    for i in range(len(type_chain) - 1)
+    if type_stats[type_chain[i]]["count"] > 0 and type_stats[type_chain[i+1]]["count"] > 0
+)
+first_fitness = type_stats[type_chain[0]]["avg_fitness"]
+last_fitness = type_stats[type_chain[-1]]["avg_fitness"]
+growth = round(last_fitness - first_fitness, 4)
+db.close()
+print(json.dumps({"type_stats": type_stats, "monotonic_fitness_growth": monotonic_fitness, "fitness_growth": growth, "stages": len(type_chain), "maturation_observable": growth > 0.1}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'type-transition', error: `Node type transition failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'type-transition', metrics: { ...result, hypotheses: ['EW_node_type_transition'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EX - Batch Query Optimization
+function benchBatchQueryOptimization() {
+  const tmpDir = makeTmpDir('batch-query');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'batch-query', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 1000; i++) entries.push({ id: `bq_${i}`, content: `batch query entry ${i} about ${['api', 'db', 'auth', 'cache', 'ui'][i % 5]} operations`, node_type: ['task_solution', 'insight', 'error_pattern', 'workflow_routing'][i % 4], importance: Math.random() * 10, access_count: Math.floor(Math.random() * 25), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time,random
+random.seed(42)
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+all_ids = [r[0] for r in c.execute("SELECT id FROM nodes").fetchall()]
+BATCH_SIZES = [10, 25, 50, 100]
+results = {}
+ITERS = 200
+for batch_size in BATCH_SIZES:
+    sample_ids = random.sample(all_ids, min(batch_size, len(all_ids)))
+    t0 = time.time()
+    for _ in range(ITERS):
+        for nid in sample_ids:
+            c.execute("SELECT id, content, fitness, importance FROM nodes WHERE id=?", (nid,)).fetchone()
+    individual_ms = round((time.time() - t0) / ITERS * 1000, 4)
+    placeholders = ','.join(['?' for _ in sample_ids])
+    t0 = time.time()
+    for _ in range(ITERS):
+        c.execute(f"SELECT id, content, fitness, importance FROM nodes WHERE id IN ({placeholders})", sample_ids).fetchall()
+    batch_ms = round((time.time() - t0) / ITERS * 1000, 4)
+    speedup = round(individual_ms / max(batch_ms, 0.001), 2)
+    results[f"n{batch_size}"] = {"individual_ms": individual_ms, "batch_ms": batch_ms, "speedup": speedup}
+best_speedup = max(results.values(), key=lambda x: x["speedup"])
+avg_speedup = round(sum(v["speedup"] for v in results.values()) / len(results), 2)
+db.close()
+print(json.dumps({"batch_results": results, "avg_speedup": avg_speedup, "best_speedup": round(best_speedup["speedup"], 2), "batch_always_faster": all(v["speedup"] > 1.0 for v in results.values())}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'batch-query', error: `Batch query optimization failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'batch-query', metrics: { ...result, hypotheses: ['EX_batch_query_optimization'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EY - Memory Pool Isolation
+function benchMemoryPoolIsolation() {
+  const tmpDir = makeTmpDir('pool-isolation');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'pool-isolation', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    const types = ['task_solution', 'insight', 'error_pattern', 'workflow_routing'];
+    for (let i = 0; i < 800; i++) entries.push({ id: `pi_${i}`, content: `pool isolation entry ${i} about ${types[i % 4]} for ${['api', 'db', 'auth', 'ui', 'test'][i % 5]} module`, node_type: types[i % 4], importance: Math.random() * 10, access_count: 1 + Math.floor(Math.random() * 20), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: Math.random(), generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+target_types = ['task_solution', 'insight']
+ITERS = 300
+t0 = time.time()
+for _ in range(ITERS):
+    c.execute("SELECT id, content, fitness FROM nodes WHERE fitness > 0.5 ORDER BY fitness DESC LIMIT 20").fetchall()
+flat_ms = round((time.time() - t0) / ITERS * 1000, 4)
+t0 = time.time()
+for _ in range(ITERS):
+    combined = []
+    for nt in target_types:
+        rows = c.execute("SELECT id, content, fitness FROM nodes WHERE node_type=? AND fitness > 0.5 ORDER BY fitness DESC LIMIT 10", (nt,)).fetchall()
+        combined.extend(rows)
+pooled_ms = round((time.time() - t0) / ITERS * 1000, 4)
+flat_results = c.execute("SELECT id, node_type, fitness FROM nodes WHERE fitness > 0.5 ORDER BY fitness DESC LIMIT 20").fetchall()
+flat_type_counts = {}
+for r in flat_results:
+    flat_type_counts[r[1]] = flat_type_counts.get(r[1], 0) + 1
+pooled_results = []
+for nt in target_types:
+    rows = c.execute("SELECT id, node_type, fitness FROM nodes WHERE node_type=? AND fitness > 0.5 ORDER BY fitness DESC LIMIT 10", (nt,)).fetchall()
+    pooled_results.extend(rows)
+pooled_type_counts = {}
+for r in pooled_results:
+    pooled_type_counts[r[1]] = pooled_type_counts.get(r[1], 0) + 1
+flat_types_represented = len(flat_type_counts)
+pooled_types_represented = len(pooled_type_counts)
+flat_target_ratio = sum(flat_type_counts.get(t, 0) for t in target_types) / max(len(flat_results), 1)
+pooled_target_ratio = sum(pooled_type_counts.get(t, 0) for t in target_types) / max(len(pooled_results), 1)
+precision_improvement = round((pooled_target_ratio - flat_target_ratio) * 100, 2)
+db.close()
+print(json.dumps({"flat_ms": flat_ms, "pooled_ms": pooled_ms, "flat_types_represented": flat_types_represented, "pooled_types_represented": pooled_types_represented, "flat_target_ratio": round(flat_target_ratio, 4), "pooled_target_ratio": round(pooled_target_ratio, 4), "precision_improvement_pct": precision_improvement, "pooling_improves_precision": pooled_target_ratio >= flat_target_ratio}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'pool-isolation', error: `Memory pool isolation failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'pool-isolation', metrics: { ...result, hypotheses: ['EY_memory_pool_isolation'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// EZ - Fitness Recovery After Deprecation
+function benchFitnessRecovery() {
+  const tmpDir = makeTmpDir('fitness-recovery');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'fitness-recovery', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 100; i++) entries.push({ id: `fr_${i}`, content: `fitness recovery entry ${i} about ${['api', 'db', 'auth', 'cache'][i % 4]} feature`, node_type: 'task_solution', importance: 5 + Math.random() * 5, access_count: 5 + Math.floor(Math.random() * 15), memory_layer: 'mutating', fitness: 0.6 + Math.random() * 0.3, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,math
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+rows = c.execute("SELECT id, fitness, importance, access_count FROM nodes").fetchall()
+DEPRECATION_PENALTY = 0.7
+RECOVERY_STEPS = 10
+ACCESS_RECOVERY_RATE = 0.08
+IMPORTANCE_RECOVERY_RATE = 0.05
+recovery_data = []
+for nid, orig_fitness, importance, access_count in rows:
+    deprecated_fitness = orig_fitness * (1 - DEPRECATION_PENALTY)
+    trajectory = [deprecated_fitness]
+    current = deprecated_fitness
+    for step in range(1, RECOVERY_STEPS + 1):
+        access_boost = min(access_count * ACCESS_RECOVERY_RATE * step / RECOVERY_STEPS, 0.3)
+        importance_boost = (importance / 10.0) * IMPORTANCE_RECOVERY_RATE * step
+        current = min(1.0, deprecated_fitness + access_boost + importance_boost)
+        trajectory.append(current)
+    steps_to_50pct = None
+    steps_to_80pct = None
+    half_orig = orig_fitness * 0.5
+    eighty_orig = orig_fitness * 0.8
+    for s, f in enumerate(trajectory):
+        if steps_to_50pct is None and f >= half_orig:
+            steps_to_50pct = s
+        if steps_to_80pct is None and f >= eighty_orig:
+            steps_to_80pct = s
+    recovery_data.append({
+        "id": nid,
+        "original": round(orig_fitness, 4),
+        "deprecated": round(deprecated_fitness, 4),
+        "final": round(trajectory[-1], 4),
+        "recovery_pct": round((trajectory[-1] - deprecated_fitness) / max(orig_fitness - deprecated_fitness, 0.001) * 100, 2),
+        "steps_to_50pct": steps_to_50pct,
+        "steps_to_80pct": steps_to_80pct
+    })
+avg_recovery_pct = round(sum(r["recovery_pct"] for r in recovery_data) / len(recovery_data), 2)
+avg_steps_50 = round(sum(r["steps_to_50pct"] or RECOVERY_STEPS for r in recovery_data) / len(recovery_data), 2)
+avg_steps_80 = round(sum(r["steps_to_80pct"] or RECOVERY_STEPS for r in recovery_data) / len(recovery_data), 2)
+fully_recovered = sum(1 for r in recovery_data if r["recovery_pct"] >= 90)
+db.close()
+print(json.dumps({"total_entries": len(recovery_data), "avg_recovery_pct": avg_recovery_pct, "avg_steps_to_50pct": avg_steps_50, "avg_steps_to_80pct": avg_steps_80, "fully_recovered_count": fully_recovered, "fully_recovered_pct": round(fully_recovered / max(len(recovery_data), 1) * 100, 2), "recovery_feasible": avg_recovery_pct > 50}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'fitness-recovery', error: `Fitness recovery failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'fitness-recovery', metrics: { ...result, hypotheses: ['EZ_fitness_recovery_after_deprecation'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// FA - Relation Density vs Query Speed
+function benchRelDensityVsSpeed() {
+  const tmpDir = makeTmpDir('rel-density-speed');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'rel-density-speed', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 200; i++) entries.push({ id: `rds_${i}`, content: `relation density speed node ${i} topic ${i % 5}`, node_type: ['task_solution', 'insight'][i % 2], importance: 3 + Math.random() * 7, access_count: 1 + Math.floor(Math.random() * 10), memory_layer: ['mutating', 'constant'][i % 2], fitness: 0.3 + Math.random() * 0.6, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const script = `
+import sqlite3,json,time,random
+random.seed(42)
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+DENSITY_LEVELS = [50, 200, 500, 1000, 2000]
+results = []
+ITERS = 100
+for density in DENSITY_LEVELS:
+    c.execute("DELETE FROM relations")
+    db.commit()
+    for _ in range(density):
+        s = f"rds_{random.randint(0, 199)}"
+        t = f"rds_{random.randint(0, 199)}"
+        if s != t:
+            try:
+                c.execute("INSERT OR IGNORE INTO relations (source_id, target_id, relation_type) VALUES (?,?,?)", (s, t, 'relates_to'))
+            except: pass
+    db.commit()
+    actual = c.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+    t0 = time.time()
+    for _ in range(ITERS):
+        seed = f"rds_{random.randint(0, 199)}"
+        c.execute("""
+            SELECT n.id, n.fitness FROM nodes n
+            WHERE n.id IN (
+                SELECT r.target_id FROM relations r WHERE r.source_id=?
+                UNION
+                SELECT r.source_id FROM relations r WHERE r.target_id=?
+            )
+            ORDER BY n.fitness DESC LIMIT 10
+        """, (seed, seed)).fetchall()
+    query_ms = round((time.time() - t0) / ITERS * 1000, 4)
+    results.append({"target_density": density, "actual_relations": actual, "query_ms": query_ms})
+fastest = min(results, key=lambda x: x["query_ms"])
+slowest = max(results, key=lambda x: x["query_ms"])
+degradation = round(slowest["query_ms"] / max(fastest["query_ms"], 0.001), 2)
+sweet_spot = min(results, key=lambda x: x["query_ms"] if x["actual_relations"] >= 50 else 999)
+db.close()
+print(json.dumps({"density_results": results, "fastest_density": fastest["target_density"], "slowest_density": slowest["target_density"], "degradation_factor": degradation, "sweet_spot_density": sweet_spot["target_density"], "sweet_spot_ms": sweet_spot["query_ms"], "degrades_at_high_density": degradation > 2.0}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'rel-density-speed', error: `Relation density vs speed failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'rel-density-speed', metrics: { ...result, hypotheses: ['FA_relation_density_vs_query_speed'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
+// FB - Knowledge Graph Completeness
+function benchGraphCompleteness() {
+  const tmpDir = makeTmpDir('graph-complete');
+  const start = Date.now();
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'graph-complete', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+    const python = detectPython();
+    const entries = [];
+    for (let i = 0; i < 150; i++) entries.push({ id: `gc_${i}`, content: `graph completeness node ${i} about ${['auth', 'api', 'db', 'cache', 'ui'][i % 5]} with ${['pattern', 'solution', 'insight'][i % 3]}`, node_type: ['task_solution', 'insight', 'error_pattern'][i % 3], importance: 2 + Math.random() * 8, access_count: 1 + Math.floor(Math.random() * 20), memory_layer: ['mutating', 'constant', 'file'][i % 3], fitness: 0.2 + Math.random() * 0.7, generation: 2, version: 1 });
+    insertNodes(dbPath, entries);
+    const relations = [];
+    for (let i = 0; i < 500; i++) {
+      const src = `gc_${Math.floor(Math.random() * 150)}`;
+      let tgt = `gc_${Math.floor(Math.random() * 150)}`;
+      if (src === tgt) tgt = `gc_${(parseInt(src.split('_')[1]) + 1) % 150}`;
+      relations.push({ source: src, target: tgt, type: ['depends_on', 'relates_to', 'derived_from'][i % 3] });
+    }
+    insertRelations(dbPath, relations);
+    const script = `
+import sqlite3,json,statistics
+db=sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+c=db.cursor()
+node_count = c.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+edge_count = c.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+max_possible = node_count * (node_count - 1)
+completeness = round(edge_count / max(max_possible, 1), 6)
+connected = c.execute("SELECT COUNT(DISTINCT id) FROM (SELECT source_id as id FROM relations UNION SELECT target_id as id FROM relations)").fetchall()[0][0]
+isolated = node_count - connected
+connectivity_ratio = round(connected / max(node_count, 1), 4)
+degree_rows = c.execute("""
+    SELECT id, (
+        (SELECT COUNT(*) FROM relations WHERE source_id=n.id) +
+        (SELECT COUNT(*) FROM relations WHERE target_id=n.id)
+    ) as degree, fitness
+    FROM nodes n
+""").fetchall()
+degrees = [r[1] for r in degree_rows]
+fitnesses = [r[2] for r in degree_rows]
+high_degree = [(r[1], r[2]) for r in degree_rows if r[1] > 5]
+low_degree = [(r[1], r[2]) for r in degree_rows if r[1] <= 1]
+avg_high_fitness = round(statistics.mean([f for _, f in high_degree]), 4) if high_degree else 0
+avg_low_fitness = round(statistics.mean([f for _, f in low_degree]), 4) if low_degree else 0
+if len(degrees) > 1 and len(fitnesses) > 1:
+    mean_d = statistics.mean(degrees)
+    mean_f = statistics.mean(fitnesses)
+    cov = sum((d - mean_d) * (f - mean_f) for d, f in zip(degrees, fitnesses)) / len(degrees)
+    std_d = statistics.stdev(degrees) if len(degrees) > 1 else 1
+    std_f = statistics.stdev(fitnesses) if len(fitnesses) > 1 else 1
+    correlation = round(cov / max(std_d * std_f, 0.0001), 4)
+else:
+    correlation = 0
+db.close()
+print(json.dumps({"node_count": node_count, "edge_count": edge_count, "max_possible_edges": max_possible, "completeness_ratio": completeness, "connected_nodes": connected, "isolated_nodes": isolated, "connectivity_ratio": connectivity_ratio, "avg_degree": round(statistics.mean(degrees), 2) if degrees else 0, "degree_fitness_correlation": correlation, "high_degree_avg_fitness": avg_high_fitness, "low_degree_avg_fitness": avg_low_fitness, "connectivity_aids_fitness": avg_high_fitness > avg_low_fitness}))
+`;
+    let result;
+    try { const out = execFileSync(python.command, ['-c', script], { encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] }).trim(); result = JSON.parse(out); }
+    catch (e) { return { bench: 'graph-complete', error: `Graph completeness failed: ${e.message}`, duration_ms: Date.now() - start }; }
+    return { bench: 'graph-complete', metrics: { ...result, hypotheses: ['FB_knowledge_graph_completeness'] }, duration_ms: Date.now() - start };
+  } finally { cleanTmpDir(tmpDir); }
+}
+
 // ─── Runner ─────────────────────────────────────────────────────────────────
 
 const BENCHMARKS = {
@@ -10612,6 +12576,42 @@ const BENCHMARKS = {
   'rel-decay': { fn: benchRelationWeightDecay, desc: 'Relation weight temporal decay [DT]' },
   'promo-velocity': { fn: benchPromotionVelocity, desc: 'Memory tier promotion velocity [DU]' },
   'query-cache': { fn: benchQueryCaching, desc: 'Query result caching effectiveness [DV]' },
+  // Round 16: DW-ED
+  'write-amp-factor': { fn: benchWriteAmplificationFactor, desc: 'Write amplification factor for update patterns [DW]' },
+  'mem-locality': { fn: benchMemoryLocality, desc: 'Memory locality via ROWID proximity [DX]' },
+  'query-plan-cost': { fn: benchQueryPlanCost, desc: 'Query plan cost comparison typical vs optimized [DY]' },
+  'bloom-filter': { fn: benchBloomFilterApprox, desc: 'Bloom filter pre-check vs full scan [DZ]' },
+  'entry-compress': { fn: benchEntryCompressionRatio, desc: 'Entry compression ratio by node type [EA]' },
+  'rel-transit': { fn: benchRelationTransitivityPath, desc: 'Relation transitivity path usefulness [EB]' },
+  'fitness-calib': { fn: benchFitnessCalibration, desc: 'Fitness score calibration accuracy [EC]' },
+  'frag-recovery': { fn: benchFragmentationRecovery, desc: 'VACUUM vs incremental fragmentation recovery [ED]' },
+  // Round 17: EE-EL
+  'decay-curve': { fn: benchTemporalDecayCurve, desc: 'Temporal decay curve selection (linear/exp/step) [EE]' },
+  'cross-type-rel': { fn: benchCrossTypeRelationValue, desc: 'Cross-type vs same-type relation value [EF]' },
+  'importance-drift': { fn: benchImportanceDrift, desc: 'Importance drift detection from access patterns [EG]' },
+  'session-boundary': { fn: benchSessionBoundary, desc: 'Session boundary detection from timestamp gaps [EH]' },
+  'degree-dist': { fn: benchNodeDegreeDistribution, desc: 'Node degree distribution and retrieval impact [EI]' },
+  'dedup-gain': { fn: benchDeduplicationGain, desc: 'Content deduplication storage savings [EJ]' },
+  'cache-hierarchy': { fn: benchLayeredCacheHierarchy, desc: 'L1/L2/L3 layered cache hierarchy simulation [EK]' },
+  'fitness-dist': { fn: benchFitnessScoreDistribution, desc: 'Fitness score distribution analysis [EL]' },
+  // Round 18: EM-ET
+  'aging-curve': { fn: benchAgingCurve, desc: 'Aging curve parameter optimization [EM]' },
+  'rel-graph-diam': { fn: benchRelationGraphDiameter, desc: 'Relation graph diameter vs retrieval [EN]' },
+  'parallel-query': { fn: benchParallelQueryBenefit, desc: 'Parallel vs sequential query benefit [EO]' },
+  'entry-size-util': { fn: benchEntrySizeUtility, desc: 'Entry size vs utility correlation [EP]' },
+  'orphan-detect': { fn: benchOrphanNodeDetection, desc: 'Orphan node detection and scoring [EQ]' },
+  'fitness-momentum': { fn: benchFitnessMomentum, desc: 'Fitness momentum prediction [ER]' },
+  'ctx-waste': { fn: benchContextWindowWaste, desc: 'Context window waste measurement [ES]' },
+  'promo-threshold': { fn: benchPromotionThresholdSensitivity, desc: 'Promotion threshold sensitivity [ET]' },
+  // Round 19: EU-FB
+  'rel-type-spec': { fn: benchRelationTypeSpecialization, desc: 'Relation type specialization retrieval value [EU]' },
+  'access-predict': { fn: benchAccessPatternPrediction, desc: 'Access pattern prediction via Markov chains [EV]' },
+  'type-transition': { fn: benchNodeTypeTransition, desc: 'Node type transition tracking over time [EW]' },
+  'batch-query': { fn: benchBatchQueryOptimization, desc: 'Batch vs individual query optimization [EX]' },
+  'pool-isolation': { fn: benchMemoryPoolIsolation, desc: 'Memory pool isolation by node type [EY]' },
+  'fitness-recovery': { fn: benchFitnessRecovery, desc: 'Fitness recovery after temporary deprecation [EZ]' },
+  'rel-density-speed': { fn: benchRelDensityVsSpeed, desc: 'Relation density vs query speed sweet spot [FA]' },
+  'graph-complete': { fn: benchGraphCompleteness, desc: 'Knowledge graph completeness and fitness correlation [FB]' },
 };
 
 /**
@@ -10773,4 +12773,40 @@ module.exports = {
   benchRelationWeightDecay,
   benchPromotionVelocity,
   benchQueryCaching,
+  // Round 16
+  benchWriteAmplificationFactor,
+  benchMemoryLocality,
+  benchQueryPlanCost,
+  benchBloomFilterApprox,
+  benchEntryCompressionRatio,
+  benchRelationTransitivityPath,
+  benchFitnessCalibration,
+  benchFragmentationRecovery,
+  // Round 17
+  benchTemporalDecayCurve,
+  benchCrossTypeRelationValue,
+  benchImportanceDrift,
+  benchSessionBoundary,
+  benchNodeDegreeDistribution,
+  benchDeduplicationGain,
+  benchLayeredCacheHierarchy,
+  benchFitnessScoreDistribution,
+  // Round 18
+  benchAgingCurve,
+  benchRelationGraphDiameter,
+  benchParallelQueryBenefit,
+  benchEntrySizeUtility,
+  benchOrphanNodeDetection,
+  benchFitnessMomentum,
+  benchContextWindowWaste,
+  benchPromotionThresholdSensitivity,
+  // Round 19
+  benchRelationTypeSpecialization,
+  benchAccessPatternPrediction,
+  benchNodeTypeTransition,
+  benchBatchQueryOptimization,
+  benchMemoryPoolIsolation,
+  benchFitnessRecovery,
+  benchRelDensityVsSpeed,
+  benchGraphCompleteness,
 };

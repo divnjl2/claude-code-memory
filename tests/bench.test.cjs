@@ -138,6 +138,42 @@ const {
   benchRelationWeightDecay,
   benchPromotionVelocity,
   benchQueryCaching,
+  // Round 16
+  benchWriteAmplificationFactor,
+  benchMemoryLocality,
+  benchQueryPlanCost,
+  benchBloomFilterApprox,
+  benchEntryCompressionRatio,
+  benchRelationTransitivityPath,
+  benchFitnessCalibration,
+  benchFragmentationRecovery,
+  // Round 17
+  benchTemporalDecayCurve,
+  benchCrossTypeRelationValue,
+  benchImportanceDrift,
+  benchSessionBoundary,
+  benchNodeDegreeDistribution,
+  benchDeduplicationGain,
+  benchLayeredCacheHierarchy,
+  benchFitnessScoreDistribution,
+  // Round 18
+  benchAgingCurve,
+  benchRelationGraphDiameter,
+  benchParallelQueryBenefit,
+  benchEntrySizeUtility,
+  benchOrphanNodeDetection,
+  benchFitnessMomentum,
+  benchContextWindowWaste,
+  benchPromotionThresholdSensitivity,
+  // Round 19
+  benchRelationTypeSpecialization,
+  benchAccessPatternPrediction,
+  benchNodeTypeTransition,
+  benchBatchQueryOptimization,
+  benchMemoryPoolIsolation,
+  benchFitnessRecovery,
+  benchRelDensityVsSpeed,
+  benchGraphCompleteness,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -146,8 +182,8 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 87 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 119);
+  it('exports BENCHMARKS with 135 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 151);
     for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
                          'latency', 'scalability', 'adversarial', 'decay', 'dedup',
                          'promotion', 'conflict', 'compaction', 'forgetting',
@@ -168,7 +204,10 @@ describe('bench module', () => {
                          'forgetthresh', 'batchopt', 'importdist', 'reltypeweight',
                          'warmup', 'staleref', 'ctxoverlap', 'fitnessplateau',
                          'concurrent', 'recovery', 'indexeff', 'vacuum',
-                         'schemaevol', 'queryplan', 'memfootprint', 'checkpoint']) {
+                         'schemaevol', 'queryplan', 'memfootprint', 'checkpoint',
+                         'decay-curve', 'cross-type-rel', 'importance-drift',
+                         'session-boundary', 'degree-dist', 'dedup-gain',
+                         'cache-hierarchy', 'fitness-dist']) {
       assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
     }
   });
@@ -2221,11 +2260,211 @@ describe('benchQueryCaching [DV] (requires SQLite)', { skip: skipSqlite && 'Pyth
   it('reports hypotheses', () => { const result = benchQueryCaching(); assert.ok(result.metrics.hypotheses.includes('DV_query_caching')); });
 });
 
+// ─── Round 16: DW-ED ────────────────────────────────────────────────────────
+
+describe('benchWriteAmplificationFactor [DW] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchWriteAmplificationFactor(); assert.equal(result.bench, 'write-amp-factor'); assert.ok(result.metrics); });
+  it('measures amplification factors', () => { const result = benchWriteAmplificationFactor(); assert.ok(result.metrics.inplace_amp_factor >= 0); assert.ok(result.metrics.append_amp_factor >= 0); });
+  it('reports hypotheses', () => { const result = benchWriteAmplificationFactor(); assert.ok(result.metrics.hypotheses.includes('DW_write_amplification_factor')); });
+});
+
+describe('benchMemoryLocality [DX] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchMemoryLocality(); assert.equal(result.bench, 'mem-locality'); assert.ok(result.metrics); });
+  it('computes locality ratio', () => { const result = benchMemoryLocality(); assert.ok(typeof result.metrics.locality_ratio === 'number'); });
+  it('reports hypotheses', () => { const result = benchMemoryLocality(); assert.ok(result.metrics.hypotheses.includes('DX_memory_locality')); });
+});
+
+describe('benchQueryPlanCost [DY] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchQueryPlanCost(); assert.equal(result.bench, 'query-plan-cost'); assert.ok(result.metrics); });
+  it('measures speedup', () => { const result = benchQueryPlanCost(); assert.ok(result.metrics.speedup_factor > 0); });
+  it('reports hypotheses', () => { const result = benchQueryPlanCost(); assert.ok(result.metrics.hypotheses.includes('DY_query_plan_cost')); });
+});
+
+describe('benchBloomFilterApprox [DZ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchBloomFilterApprox(); assert.equal(result.bench, 'bloom-filter'); assert.ok(result.metrics); });
+  it('has no false negatives', () => { const result = benchBloomFilterApprox(); assert.equal(result.metrics.false_negatives, 0); });
+  it('reports hypotheses', () => { const result = benchBloomFilterApprox(); assert.ok(result.metrics.hypotheses.includes('DZ_bloom_filter_approximation')); });
+});
+
+describe('benchEntryCompressionRatio [EA] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchEntryCompressionRatio(); assert.equal(result.bench, 'entry-compress'); assert.ok(result.metrics); });
+  it('achieves compression', () => { const result = benchEntryCompressionRatio(); assert.ok(result.metrics.overall_ratio > 1.0); });
+  it('reports hypotheses', () => { const result = benchEntryCompressionRatio(); assert.ok(result.metrics.hypotheses.includes('EA_entry_compression_ratio')); });
+});
+
+describe('benchRelationTransitivityPath [EB] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchRelationTransitivityPath(); assert.equal(result.bench, 'rel-transit'); assert.ok(result.metrics); });
+  it('transitive reach exceeds direct', () => { const result = benchRelationTransitivityPath(); assert.ok(result.metrics.avg_transitive_reach >= result.metrics.avg_direct_reach); });
+  it('reports hypotheses', () => { const result = benchRelationTransitivityPath(); assert.ok(result.metrics.hypotheses.includes('EB_relation_transitivity')); });
+});
+
+describe('benchFitnessCalibration [EC] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchFitnessCalibration(); assert.equal(result.bench, 'fitness-calib'); assert.ok(result.metrics); });
+  it('has monotonic ordering', () => { const result = benchFitnessCalibration(); assert.ok(result.metrics.monotonic_ordering); });
+  it('reports hypotheses', () => { const result = benchFitnessCalibration(); assert.ok(result.metrics.hypotheses.includes('EC_fitness_calibration')); });
+});
+
+describe('benchFragmentationRecovery [ED] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchFragmentationRecovery(); assert.equal(result.bench, 'frag-recovery'); assert.ok(result.metrics); });
+  it('vacuum reduces size', () => { const result = benchFragmentationRecovery(); assert.ok(result.metrics.vacuum_reduction_pct > 0); });
+  it('reports hypotheses', () => { const result = benchFragmentationRecovery(); assert.ok(result.metrics.hypotheses.includes('ED_fragmentation_recovery')); });
+});
+
+// ─── Round 17: EE-EL ────────────────────────────────────────────────────────
+
+describe('benchTemporalDecayCurve [EE] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchTemporalDecayCurve(); assert.equal(result.bench, 'decay-curve'); assert.ok(result.metrics); });
+  it('identifies best decay', () => { const result = benchTemporalDecayCurve(); assert.ok(result.metrics.best_decay); assert.ok(result.metrics.best_separation > 0); });
+  it('reports hypotheses', () => { const result = benchTemporalDecayCurve(); assert.ok(result.metrics.hypotheses.includes('EE_temporal_decay_curve_selection')); });
+});
+
+describe('benchCrossTypeRelationValue [EF] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchCrossTypeRelationValue(); assert.equal(result.bench, 'cross-type-rel'); assert.ok(result.metrics); });
+  it('has relation counts', () => { const result = benchCrossTypeRelationValue(); assert.ok(result.metrics.total_relations > 0); assert.ok(typeof result.metrics.cross_to_same_ratio === 'number'); });
+  it('reports hypotheses', () => { const result = benchCrossTypeRelationValue(); assert.ok(result.metrics.hypotheses.includes('EF_cross_type_relation_value')); });
+});
+
+describe('benchImportanceDrift [EG] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchImportanceDrift(); assert.equal(result.bench, 'importance-drift'); assert.ok(result.metrics); });
+  it('detects drifted entries', () => { const result = benchImportanceDrift(); assert.ok(result.metrics.drift_detected); assert.ok(result.metrics.drifted_count > 0); });
+  it('reports hypotheses', () => { const result = benchImportanceDrift(); assert.ok(result.metrics.hypotheses.includes('EG_importance_drift_detection')); });
+});
+
+describe('benchSessionBoundary [EH] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchSessionBoundary(); assert.equal(result.bench, 'session-boundary'); assert.ok(result.metrics); });
+  it('detects sessions', () => { const result = benchSessionBoundary(); assert.ok(result.metrics.detected_sessions > 0); });
+  it('reports hypotheses', () => { const result = benchSessionBoundary(); assert.ok(result.metrics.hypotheses.includes('EH_session_boundary_detection')); });
+});
+
+describe('benchNodeDegreeDistribution [EI] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchNodeDegreeDistribution(); assert.equal(result.bench, 'degree-dist'); assert.ok(result.metrics); });
+  it('has degree stats', () => { const result = benchNodeDegreeDistribution(); assert.ok(result.metrics.mean_degree > 0); assert.ok(typeof result.metrics.gini_coefficient === 'number'); });
+  it('reports hypotheses', () => { const result = benchNodeDegreeDistribution(); assert.ok(result.metrics.hypotheses.includes('EI_node_degree_distribution')); });
+});
+
+describe('benchDeduplicationGain [EJ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchDeduplicationGain(); assert.equal(result.bench, 'dedup-gain'); assert.ok(result.metrics); });
+  it('finds duplicates', () => { const result = benchDeduplicationGain(); assert.ok(result.metrics.duplicates_found > 0); assert.ok(result.metrics.storage_savings_pct > 0); });
+  it('reports hypotheses', () => { const result = benchDeduplicationGain(); assert.ok(result.metrics.hypotheses.includes('EJ_content_deduplication_gain')); });
+});
+
+describe('benchLayeredCacheHierarchy [EK] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchLayeredCacheHierarchy(); assert.equal(result.bench, 'cache-hierarchy'); assert.ok(result.metrics); });
+  it('has tiered counts', () => { const result = benchLayeredCacheHierarchy(); assert.ok(result.metrics.l1_hot_count > 0); assert.ok(result.metrics.l1_hit_rate_pct > 0); });
+  it('reports hypotheses', () => { const result = benchLayeredCacheHierarchy(); assert.ok(result.metrics.hypotheses.includes('EK_layered_cache_hierarchy')); });
+});
+
+describe('benchFitnessScoreDistribution [EL] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchFitnessScoreDistribution(); assert.equal(result.bench, 'fitness-dist'); assert.ok(result.metrics); });
+  it('has distribution stats', () => { const result = benchFitnessScoreDistribution(); assert.ok(typeof result.metrics.mean_fitness === 'number'); assert.ok(result.metrics.distribution_type); });
+  it('reports hypotheses', () => { const result = benchFitnessScoreDistribution(); assert.ok(result.metrics.hypotheses.includes('EL_fitness_score_distribution')); });
+});
+
+// ─── Round 18: EM-ET ────────────────────────────────────────────────────────
+
+describe('benchAgingCurve [EM] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchAgingCurve(); assert.equal(result.bench, 'aging-curve'); assert.ok(result.metrics); });
+  it('finds best half-life', () => { const result = benchAgingCurve(); assert.ok(result.metrics.best_half_life > 0); });
+  it('reports hypotheses', () => { const result = benchAgingCurve(); assert.ok(result.metrics.hypotheses.includes('EM_aging_curve_optimization')); });
+});
+
+describe('benchRelationGraphDiameter [EN] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchRelationGraphDiameter(); assert.equal(result.bench, 'rel-graph-diam'); assert.ok(result.metrics); });
+  it('measures diameter', () => { const result = benchRelationGraphDiameter(); assert.ok(result.metrics.diameter > 0); });
+  it('reports hypotheses', () => { const result = benchRelationGraphDiameter(); assert.ok(result.metrics.hypotheses.includes('EN_relation_graph_diameter')); });
+});
+
+describe('benchParallelQueryBenefit [EO] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchParallelQueryBenefit(); assert.equal(result.bench, 'parallel-query'); assert.ok(result.metrics); });
+  it('measures speedup', () => { const result = benchParallelQueryBenefit(); assert.ok(result.metrics.speedup_factor > 0); });
+  it('reports hypotheses', () => { const result = benchParallelQueryBenefit(); assert.ok(result.metrics.hypotheses.includes('EO_parallel_query_benefit')); });
+});
+
+describe('benchEntrySizeUtility [EP] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchEntrySizeUtility(); assert.equal(result.bench, 'entry-size-util'); assert.ok(result.metrics); });
+  it('computes correlation', () => { const result = benchEntrySizeUtility(); assert.ok(typeof result.metrics.size_utility_correlation === 'number'); });
+  it('reports hypotheses', () => { const result = benchEntrySizeUtility(); assert.ok(result.metrics.hypotheses.includes('EP_entry_size_vs_utility')); });
+});
+
+describe('benchOrphanNodeDetection [EQ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchOrphanNodeDetection(); assert.equal(result.bench, 'orphan-detect'); assert.ok(result.metrics); });
+  it('detects orphans', () => { const result = benchOrphanNodeDetection(); assert.ok(result.metrics.orphan_count > 0); });
+  it('reports hypotheses', () => { const result = benchOrphanNodeDetection(); assert.ok(result.metrics.hypotheses.includes('EQ_orphan_node_detection')); });
+});
+
+describe('benchFitnessMomentum [ER] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchFitnessMomentum(); assert.equal(result.bench, 'fitness-momentum'); assert.ok(result.metrics); });
+  it('momentum ratio positive', () => { const result = benchFitnessMomentum(); assert.ok(result.metrics.momentum_ratio > 0); });
+  it('reports hypotheses', () => { const result = benchFitnessMomentum(); assert.ok(result.metrics.hypotheses.includes('ER_fitness_momentum')); });
+});
+
+describe('benchContextWindowWaste [ES] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchContextWindowWaste(); assert.equal(result.bench, 'ctx-waste'); assert.ok(result.metrics); });
+  it('measures waste percentage', () => { const result = benchContextWindowWaste(); assert.ok(typeof result.metrics.waste_pct === 'number'); });
+  it('reports hypotheses', () => { const result = benchContextWindowWaste(); assert.ok(result.metrics.hypotheses.includes('ES_context_window_waste')); });
+});
+
+describe('benchPromotionThresholdSensitivity [ET] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchPromotionThresholdSensitivity(); assert.equal(result.bench, 'promo-threshold'); assert.ok(result.metrics); });
+  it('finds best threshold', () => { const result = benchPromotionThresholdSensitivity(); assert.ok(result.metrics.best_threshold > 0); });
+  it('reports hypotheses', () => { const result = benchPromotionThresholdSensitivity(); assert.ok(result.metrics.hypotheses.includes('ET_promotion_threshold_sensitivity')); });
+});
+
+// ─── Round 19: EU-FB ────────────────────────────────────────────────────────
+
+describe('benchRelationTypeSpecialization [EU] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchRelationTypeSpecialization(); assert.equal(result.bench, 'rel-type-spec'); assert.ok(result.metrics); });
+  it('identifies best and worst types', () => { const result = benchRelationTypeSpecialization(); assert.ok(result.metrics.best_type); assert.ok(result.metrics.worst_type); });
+  it('reports hypotheses', () => { const result = benchRelationTypeSpecialization(); assert.ok(result.metrics.hypotheses.includes('EU_relation_type_specialization')); });
+});
+
+describe('benchAccessPatternPrediction [EV] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchAccessPatternPrediction(); assert.equal(result.bench, 'access-predict'); assert.ok(result.metrics); });
+  it('computes prediction accuracy', () => { const result = benchAccessPatternPrediction(); assert.ok(typeof result.metrics.top1_accuracy === 'number'); });
+  it('reports hypotheses', () => { const result = benchAccessPatternPrediction(); assert.ok(result.metrics.hypotheses.includes('EV_access_pattern_prediction')); });
+});
+
+describe('benchNodeTypeTransition [EW] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchNodeTypeTransition(); assert.equal(result.bench, 'type-transition'); assert.ok(result.metrics); });
+  it('tracks fitness growth', () => { const result = benchNodeTypeTransition(); assert.ok(typeof result.metrics.fitness_growth === 'number'); });
+  it('reports hypotheses', () => { const result = benchNodeTypeTransition(); assert.ok(result.metrics.hypotheses.includes('EW_node_type_transition')); });
+});
+
+describe('benchBatchQueryOptimization [EX] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchBatchQueryOptimization(); assert.equal(result.bench, 'batch-query'); assert.ok(result.metrics); });
+  it('measures speedup', () => { const result = benchBatchQueryOptimization(); assert.ok(result.metrics.avg_speedup > 0); });
+  it('reports hypotheses', () => { const result = benchBatchQueryOptimization(); assert.ok(result.metrics.hypotheses.includes('EX_batch_query_optimization')); });
+});
+
+describe('benchMemoryPoolIsolation [EY] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchMemoryPoolIsolation(); assert.equal(result.bench, 'pool-isolation'); assert.ok(result.metrics); });
+  it('measures precision improvement', () => { const result = benchMemoryPoolIsolation(); assert.ok(typeof result.metrics.precision_improvement_pct === 'number'); });
+  it('reports hypotheses', () => { const result = benchMemoryPoolIsolation(); assert.ok(result.metrics.hypotheses.includes('EY_memory_pool_isolation')); });
+});
+
+describe('benchFitnessRecovery [EZ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchFitnessRecovery(); assert.equal(result.bench, 'fitness-recovery'); assert.ok(result.metrics); });
+  it('measures recovery percentage', () => { const result = benchFitnessRecovery(); assert.ok(result.metrics.avg_recovery_pct > 0); });
+  it('reports hypotheses', () => { const result = benchFitnessRecovery(); assert.ok(result.metrics.hypotheses.includes('EZ_fitness_recovery_after_deprecation')); });
+});
+
+describe('benchRelDensityVsSpeed [FA] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchRelDensityVsSpeed(); assert.equal(result.bench, 'rel-density-speed'); assert.ok(result.metrics); });
+  it('finds sweet spot density', () => { const result = benchRelDensityVsSpeed(); assert.ok(result.metrics.sweet_spot_density > 0); });
+  it('reports hypotheses', () => { const result = benchRelDensityVsSpeed(); assert.ok(result.metrics.hypotheses.includes('FA_relation_density_vs_query_speed')); });
+});
+
+describe('benchGraphCompleteness [FB] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => { const result = benchGraphCompleteness(); assert.equal(result.bench, 'graph-complete'); assert.ok(result.metrics); });
+  it('computes completeness ratio', () => { const result = benchGraphCompleteness(); assert.ok(typeof result.metrics.completeness_ratio === 'number'); });
+  it('reports hypotheses', () => { const result = benchGraphCompleteness(); assert.ok(result.metrics.hypotheses.includes('FB_knowledge_graph_completeness')); });
+});
+
 describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 119);
+    assert.equal(results.length, 151);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);

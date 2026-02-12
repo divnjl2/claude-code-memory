@@ -960,6 +960,167 @@ function printResult(r) {
       console.log(`  Caching reduces 60%: ${m.caching_reduces_60pct}`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'decay-curve':
+      console.log(`  Entries: ${m.total_entries}, Hot: ${m.hot_count}`);
+      console.log(`  Linear sep: ${m.linear_sep}, Exp sep: ${m.exponential_sep}, Step sep: ${m.step_sep}`);
+      console.log(`  Best decay: ${m.best_decay} (separation=${m.best_separation})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'cross-type-rel':
+      console.log(`  Relations: ${m.total_relations} (same=${m.same_type_count}, cross=${m.cross_type_count})`);
+      console.log(`  Same-type value: ${m.avg_same_type_value}, Cross-type value: ${m.avg_cross_type_value}`);
+      console.log(`  Cross/same ratio: ${m.cross_to_same_ratio}, Cross more valuable: ${m.cross_type_more_valuable}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'importance-drift':
+      console.log(`  Entries: ${m.total_entries}, Drifted: ${m.drifted_count}, Aligned: ${m.aligned_count}`);
+      console.log(`  Drift ratio: ${m.drift_ratio}, Correlation: ${m.importance_access_correlation}`);
+      console.log(`  Drifted fitness: ${m.avg_drifted_fitness}, Aligned fitness: ${m.avg_aligned_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'session-boundary':
+      console.log(`  Entries: ${m.total_entries}, Detected sessions: ${m.detected_sessions} (expected: ${m.expected_sessions})`);
+      console.log(`  Boundaries: ${m.detected_boundaries}, Avg gap: ${m.avg_gap_hours}h`);
+      console.log(`  Avg session size: ${m.avg_session_size}, Accurate: ${m.session_detection_accurate}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'degree-dist':
+      console.log(`  Nodes: ${m.total_nodes}, Edges: ${m.total_edges}`);
+      console.log(`  Mean degree: ${m.mean_degree}, Max: ${m.max_degree}, Gini: ${m.gini_coefficient}`);
+      console.log(`  Top 10% edge share: ${m.top10_edge_share}, Power-law: ${m.power_law_like}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'dedup-gain':
+      console.log(`  Before: ${m.total_before}, After: ${m.total_after}, Duplicates: ${m.duplicates_found}`);
+      console.log(`  Reduction: ${m.dedup_reduction_pct}%, Storage savings: ${m.storage_savings_pct}%`);
+      console.log(`  Kept fitness: ${m.avg_kept_fitness}, Removed fitness: ${m.avg_removed_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'cache-hierarchy':
+      console.log(`  L1(hot): ${m.l1_hot_count}, L2(warm): ${m.l2_warm_count}, L3(cold): ${m.l3_cold_count}`);
+      console.log(`  L1 hits: ${m.l1_hits}, L2 hits: ${m.l2_hits}, L3 hits: ${m.l3_hits}`);
+      console.log(`  L1 hit rate: ${m.l1_hit_rate_pct}%, L1 fitness highest: ${m.l1_fitness_highest}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'fitness-dist':
+      console.log(`  Entries: ${m.total_entries}, Mean: ${m.mean_fitness}, Std: ${m.std_fitness}`);
+      console.log(`  Skewness: ${m.skewness}, Kurtosis: ${m.kurtosis}, Type: ${m.distribution_type}`);
+      console.log(`  Top 20% avg access: ${m.top20_avg_access}, Bot 80%: ${m.bot80_avg_access}, Selection ratio: ${m.selection_quality_ratio}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'aging-curve':
+      console.log(`  Entries: ${m.total_entries}, Configs tested: ${m.configs_tested}`);
+      console.log(`  Best half-life: ${m.best_half_life}d, Floor: ${m.best_floor}, Precision@50: ${m.best_precision_at_50}`);
+      console.log(`  Types differ: ${m.types_differ}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'rel-graph-diam':
+      console.log(`  Diameter: ${m.diameter}, Radius: ${m.radius}, Avg eccentricity: ${m.avg_eccentricity}`);
+      console.log(`  Density: ${m.graph_density}, Connected: ${m.connected_nodes}/${m.total_nodes}, BFS: ${m.bfs_sample_ms}ms`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'parallel-query':
+      console.log(`  Queries: ${m.num_queries}, Iterations: ${m.iterations}`);
+      console.log(`  Sequential: ${m.sequential_ms}ms, Parallel: ${m.parallel_ms}ms, Speedup: ${m.speedup_factor}x`);
+      console.log(`  Efficiency: ${m.parallel_efficiency_pct}%, Faster: ${m.parallel_faster}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'entry-size-util':
+      console.log(`  Entries: ${m.total_entries}, Correlation: ${m.size_utility_correlation}`);
+      console.log(`  Short: ${m.short.count} (${m.utility_per_byte_short}/byte), Medium: ${m.medium.count} (${m.utility_per_byte_medium}/byte), Long: ${m.long.count} (${m.utility_per_byte_long}/byte)`);
+      console.log(`  Medium most efficient: ${m.medium_most_efficient}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'orphan-detect':
+      console.log(`  Total: ${m.total_nodes}, Orphans: ${m.orphan_count} (${m.orphan_pct}%), Connected: ${m.connected_count}`);
+      console.log(`  Safe to prune: ${m.safe_to_prune}, Connected higher fitness: ${m.connected_higher_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'fitness-momentum':
+      console.log(`  Rising: ${m.rising_count}, Stable: ${m.stable_count}`);
+      console.log(`  Rising momentum: ${m.avg_rising_momentum}, Stable: ${m.avg_stable_momentum}, Ratio: ${m.momentum_ratio}`);
+      console.log(`  Predicts fitness: ${m.momentum_predicts_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'ctx-waste':
+      console.log(`  Budget: ${m.context_budget}, Used: ${m.actually_used}, Wasted: ${m.wasted} (${m.waste_pct}%)`);
+      console.log(`  Random waste: ${m.random_waste_pct}%, Fitness reduces waste: ${m.fitness_reduces_waste}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'promo-threshold':
+      console.log(`  Entries: ${m.total_entries}, High value: ${m.high_value_count}`);
+      console.log(`  Best threshold: ${m.best_threshold}, F1: ${m.best_f1}, Precision: ${m.best_precision}, Recall: ${m.best_recall}`);
+      console.log(`  Sensitivity: ${m.sensitivity_range}, Matters: ${m.threshold_matters}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'rel-type-spec':
+      console.log(`  Best type: ${m.best_type}, Worst: ${m.worst_type}, Spread: ${m.fitness_spread}`);
+      console.log(`  Types differ: ${m.types_differ}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'access-predict':
+      console.log(`  Sequence: ${m.sequence_length}, Unique IDs: ${m.unique_ids}, Predictions: ${m.predictions_made}`);
+      console.log(`  Top1: ${m.top1_accuracy}, Top3: ${m.top3_accuracy}, Lift: ${m.prediction_lift}x`);
+      console.log(`  Markov useful: ${m.markov_useful}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'type-transition':
+      console.log(`  Stages: ${m.stages}, Fitness growth: ${m.fitness_growth}`);
+      console.log(`  Monotonic: ${m.monotonic_fitness_growth}, Maturation observable: ${m.maturation_observable}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'batch-query':
+      console.log(`  Avg speedup: ${m.avg_speedup}x, Best: ${m.best_speedup}x`);
+      console.log(`  Batch always faster: ${m.batch_always_faster}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'pool-isolation':
+      console.log(`  Flat: ${m.flat_ms}ms, Pooled: ${m.pooled_ms}ms`);
+      console.log(`  Flat target ratio: ${m.flat_target_ratio}, Pooled: ${m.pooled_target_ratio}, Improvement: ${m.precision_improvement_pct}%`);
+      console.log(`  Pooling improves precision: ${m.pooling_improves_precision}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'fitness-recovery':
+      console.log(`  Entries: ${m.total_entries}, Avg recovery: ${m.avg_recovery_pct}%`);
+      console.log(`  Steps to 50%: ${m.avg_steps_to_50pct}, Steps to 80%: ${m.avg_steps_to_80pct}`);
+      console.log(`  Fully recovered: ${m.fully_recovered_count} (${m.fully_recovered_pct}%), Feasible: ${m.recovery_feasible}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'rel-density-speed':
+      console.log(`  Sweet spot: ${m.sweet_spot_density} rels (${m.sweet_spot_ms}ms)`);
+      console.log(`  Degradation: ${m.degradation_factor}x, Degrades at high: ${m.degrades_at_high_density}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'graph-complete':
+      console.log(`  Nodes: ${m.node_count}, Edges: ${m.edge_count}, Completeness: ${m.completeness_ratio}`);
+      console.log(`  Connected: ${m.connected_nodes}, Isolated: ${m.isolated_nodes}, Connectivity: ${m.connectivity_ratio}`);
+      console.log(`  Degree-fitness correlation: ${m.degree_fitness_correlation}, Connectivity aids: ${m.connectivity_aids_fitness}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -1109,6 +1270,42 @@ function printAllResults(results) {
       case 'rel-decay': console.log(`  [+] rel-decay: raw=${m.avg_raw_relevance}, decayed=${m.avg_decayed_relevance}, improves=${m.decay_improves_relevance}`); break;
       case 'promo-velocity': console.log(`  [+] promo-velocity: current=${m.current_promoted_count}, proposed=${m.proposed_promoted_count}, better=${m.proposed_captures_fast_better}`); break;
       case 'query-cache': console.log(`  [+] query-cache: no_cache=${m.no_cache_ms}ms, cached=${m.full_cache_ms}ms, hit_rate=${m.full_cache_hit_rate_pct}%`); break;
+      // Round 16: DW-ED
+      case 'write-amp-factor': console.log(`  [+] write-amp-factor: inplace=${m.inplace_amp_factor}x, append=${m.append_amp_factor}x, cow=${m.cow_amp_factor}x, inplace_best=${m.inplace_is_lowest_amp}`); break;
+      case 'mem-locality': console.log(`  [+] mem-locality: intra_gap=${m.avg_intra_topic_gap}, inter_gap=${m.avg_inter_topic_gap}, ratio=${m.locality_ratio}`); break;
+      case 'query-plan-cost': console.log(`  [+] query-plan-cost: typical=${m.typical_ms}ms, optimized=${m.optimized_ms}ms, speedup=${m.speedup_factor}x`); break;
+      case 'bloom-filter': console.log(`  [+] bloom-filter: bloom=${m.bloom_ms}ms, scan=${m.scan_ms}ms, speedup=${m.speedup}x, fp=${m.false_positives}`); break;
+      case 'entry-compress': console.log(`  [+] entry-compress: ratio=${m.overall_ratio}x, best=${m.best_compressible_type} (${m.best_ratio}x)`); break;
+      case 'rel-transit': console.log(`  [+] rel-transit: direct=${m.avg_direct_reach}, transitive=${m.avg_transitive_reach}, amplification=${m.reach_amplification}x`); break;
+      case 'fitness-calib': console.log(`  [+] fitness-calib: high=${m.avg_high_fitness}, med=${m.avg_med_fitness}, low=${m.avg_low_fitness}, corr=${m.fitness_importance_correlation}`); break;
+      case 'frag-recovery': console.log(`  [+] frag-recovery: vacuum_reduction=${m.vacuum_reduction_pct}%, vacuum_speedup=${m.vacuum_query_speedup}x, incr_speedup=${m.incr_query_speedup}x`); break;
+      // Round 17: EE-EL
+      case 'decay-curve': console.log(`  [+] decay-curve: best=${m.best_decay}, sep=${m.best_separation}, exp_best=${m.exponential_best}`); break;
+      case 'cross-type-rel': console.log(`  [+] cross-type-rel: same=${m.avg_same_type_value}, cross=${m.avg_cross_type_value}, ratio=${m.cross_to_same_ratio}`); break;
+      case 'importance-drift': console.log(`  [+] importance-drift: drifted=${m.drifted_count}/${m.total_entries}, corr=${m.importance_access_correlation}`); break;
+      case 'session-boundary': console.log(`  [+] session-boundary: detected=${m.detected_sessions}/${m.expected_sessions}, accurate=${m.session_detection_accurate}`); break;
+      case 'degree-dist': console.log(`  [+] degree-dist: mean=${m.mean_degree}, gini=${m.gini_coefficient}, power_law=${m.power_law_like}`); break;
+      case 'dedup-gain': console.log(`  [+] dedup-gain: duplicates=${m.duplicates_found}, savings=${m.storage_savings_pct}%, kept_better=${m.kept_fitness_higher}`); break;
+      case 'cache-hierarchy': console.log(`  [+] cache-hierarchy: L1=${m.l1_hot_count}, L2=${m.l2_warm_count}, L3=${m.l3_cold_count}, hit_rate=${m.l1_hit_rate_pct}%`); break;
+      case 'fitness-dist': console.log(`  [+] fitness-dist: type=${m.distribution_type}, mean=${m.mean_fitness}, selection=${m.selection_quality_ratio}x`); break;
+      // Round 18: EM-ET
+      case 'aging-curve': console.log(`  [+] aging-curve: half_life=${m.best_half_life}d, floor=${m.best_floor}, precision=${m.best_precision_at_50}, types_differ=${m.types_differ}`); break;
+      case 'rel-graph-diam': console.log(`  [+] rel-graph-diam: diameter=${m.diameter}, radius=${m.radius}, density=${m.graph_density}, bfs=${m.bfs_sample_ms}ms`); break;
+      case 'parallel-query': console.log(`  [+] parallel-query: seq=${m.sequential_ms}ms, par=${m.parallel_ms}ms, speedup=${m.speedup_factor}x, eff=${m.parallel_efficiency_pct}%`); break;
+      case 'entry-size-util': console.log(`  [+] entry-size-util: corr=${m.size_utility_correlation}, med_eff=${m.utility_per_byte_medium}, medium_best=${m.medium_most_efficient}`); break;
+      case 'orphan-detect': console.log(`  [+] orphan-detect: orphans=${m.orphan_count}/${m.total_nodes} (${m.orphan_pct}%), prune=${m.safe_to_prune}, connected_better=${m.connected_higher_fitness}`); break;
+      case 'fitness-momentum': console.log(`  [+] fitness-momentum: rising=${m.avg_rising_momentum}, stable=${m.avg_stable_momentum}, ratio=${m.momentum_ratio}, predicts=${m.momentum_predicts_fitness}`); break;
+      case 'ctx-waste': console.log(`  [+] ctx-waste: used=${m.actually_used}/${m.loaded}, waste=${m.waste_pct}%, random_waste=${m.random_waste_pct}%, reduces=${m.fitness_reduces_waste}`); break;
+      case 'promo-threshold': console.log(`  [+] promo-threshold: best=${m.best_threshold}, f1=${m.best_f1}, sensitivity=${m.sensitivity_range}, matters=${m.threshold_matters}`); break;
+      // Round 19: EU-FB
+      case 'rel-type-spec': console.log(`  [+] rel-type-spec: best=${m.best_type}, worst=${m.worst_type}, spread=${m.fitness_spread}`); break;
+      case 'access-predict': console.log(`  [+] access-predict: top1=${m.top1_accuracy}, top3=${m.top3_accuracy}, lift=${m.prediction_lift}x`); break;
+      case 'type-transition': console.log(`  [+] type-transition: growth=${m.fitness_growth}, monotonic=${m.monotonic_fitness_growth}`); break;
+      case 'batch-query': console.log(`  [+] batch-query: avg_speedup=${m.avg_speedup}x, best=${m.best_speedup}x, always_faster=${m.batch_always_faster}`); break;
+      case 'pool-isolation': console.log(`  [+] pool-isolation: precision_impr=${m.precision_improvement_pct}%, pooled=${m.pooled_target_ratio}`); break;
+      case 'fitness-recovery': console.log(`  [+] fitness-recovery: avg=${m.avg_recovery_pct}%, steps_50=${m.avg_steps_to_50pct}, steps_80=${m.avg_steps_to_80pct}`); break;
+      case 'rel-density-speed': console.log(`  [+] rel-density-speed: sweet_spot=${m.sweet_spot_density}, degradation=${m.degradation_factor}x`); break;
+      case 'graph-complete': console.log(`  [+] graph-complete: completeness=${m.completeness_ratio}, correlation=${m.degree_fitness_correlation}, connected=${m.connectivity_ratio}`); break;
     }
   }
   console.log('');
