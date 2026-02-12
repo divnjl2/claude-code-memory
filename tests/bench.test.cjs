@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tests for bench.cjs — Memory system benchmarks (23 benchmarks, 27 hypotheses)
+ * Tests for bench.cjs — Memory system benchmarks (31 benchmarks, 35 hypotheses)
  */
 
 'use strict';
@@ -35,6 +35,14 @@ const {
   benchFreshness,
   benchHubNodes,
   benchCoherence,
+  benchCrossLayer,
+  benchCoAccess,
+  benchKeywordDensity,
+  benchBatchVsIncremental,
+  benchColdStart,
+  benchFragmentation,
+  benchCascadeDeprecation,
+  benchRecencyRelations,
 } = require('../src/lib/bench.cjs');
 
 const { detectPython } = require('../src/lib/python-detector.cjs');
@@ -43,13 +51,15 @@ const python = detectPython();
 const skipSqlite = !python.available;
 
 describe('bench module', () => {
-  it('exports BENCHMARKS with 23 entries', () => {
-    assert.equal(Object.keys(BENCHMARKS).length, 23);
+  it('exports BENCHMARKS with 31 entries', () => {
+    assert.equal(Object.keys(BENCHMARKS).length, 31);
     for (const name of ['recall', 'persist', 'fitness', 'effort', 'context', 'drift',
                          'latency', 'scalability', 'adversarial', 'decay', 'dedup',
                          'promotion', 'conflict', 'compaction', 'forgetting',
                          'temporal', 'inheritance', 'queryrewrite', 'capacity',
-                         'gengap', 'freshness', 'hubnodes', 'coherence']) {
+                         'gengap', 'freshness', 'hubnodes', 'coherence',
+                         'crosslayer', 'coaccess', 'kwdensity', 'batchinc',
+                         'coldstart', 'fragmentation', 'cascade', 'recrel']) {
       assert.ok(BENCHMARKS[name], `Missing benchmark: ${name}`);
     }
   });
@@ -796,11 +806,176 @@ describe('benchCoherence [AD] (requires SQLite)', { skip: skipSqlite && 'Python/
   });
 });
 
+// ─── Round 4: Hypotheses AE-AL ──────────────────────────────────────────────
+
+describe('benchCrossLayer [AE] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCrossLayer();
+    assert.equal(result.bench, 'crosslayer');
+    assert.ok(result.metrics);
+  });
+
+  it('linked entries get higher boost than isolated', () => {
+    const result = benchCrossLayer();
+    assert.ok(result.metrics.linked_boost > result.metrics.isolated_boost,
+      'Cross-layer linked entries should get higher boost');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchCrossLayer();
+    assert.ok(result.metrics.hypotheses.includes('AE_cross_layer_references'));
+  });
+});
+
+describe('benchCoAccess [AF] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCoAccess();
+    assert.equal(result.bench, 'coaccess');
+    assert.ok(result.metrics);
+  });
+
+  it('co-access beats random', () => {
+    const result = benchCoAccess();
+    assert.ok(result.metrics.coaccess_advantage >= 1.0,
+      'Co-access should be at least as good as random');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchCoAccess();
+    assert.ok(result.metrics.hypotheses.includes('AF_co_access_patterns'));
+  });
+});
+
+describe('benchKeywordDensity [AG] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchKeywordDensity();
+    assert.equal(result.bench, 'kwdensity');
+    assert.ok(result.metrics);
+  });
+
+  it('rare keywords get higher boost', () => {
+    const result = benchKeywordDensity();
+    assert.ok(result.metrics.rare_boost > result.metrics.common_boost,
+      'Rare keyword entries should get higher IDF boost');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchKeywordDensity();
+    assert.ok(result.metrics.hypotheses.includes('AG_keyword_density_idf'));
+  });
+});
+
+describe('benchBatchVsIncremental [AH] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchBatchVsIncremental();
+    assert.equal(result.bench, 'batchinc');
+    assert.ok(result.metrics);
+  });
+
+  it('top-10 agreement is high', () => {
+    const result = benchBatchVsIncremental();
+    assert.ok(result.metrics.top10_overlap >= 7,
+      'Batch and incremental should agree on most top-10 entries');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchBatchVsIncremental();
+    assert.ok(result.metrics.hypotheses.includes('AH_batch_vs_incremental'));
+  });
+});
+
+describe('benchColdStart [AI] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchColdStart();
+    assert.equal(result.bench, 'coldstart');
+    assert.ok(result.metrics);
+  });
+
+  it('grace period improves new entry survival', () => {
+    const result = benchColdStart();
+    assert.ok(result.metrics.grace_new_survival >= result.metrics.no_grace_new_survival,
+      'Grace period should improve or maintain survival');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchColdStart();
+    assert.ok(result.metrics.hypotheses.includes('AI_cold_start_mitigation'));
+  });
+});
+
+describe('benchFragmentation [AJ] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchFragmentation();
+    assert.equal(result.bench, 'fragmentation');
+    assert.ok(result.metrics);
+  });
+
+  it('detects isolated nodes', () => {
+    const result = benchFragmentation();
+    assert.ok(result.metrics.isolated_nodes > 0, 'Should find isolated nodes');
+  });
+
+  it('defragmentation reduces fragmentation score', () => {
+    const result = benchFragmentation();
+    assert.ok(result.metrics.fragmentation_reduction > 0,
+      'Defragmentation should reduce fragmentation score');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchFragmentation();
+    assert.ok(result.metrics.hypotheses.includes('AJ_memory_fragmentation'));
+  });
+});
+
+describe('benchCascadeDeprecation [AK] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchCascadeDeprecation();
+    assert.equal(result.bench, 'cascade');
+    assert.ok(result.metrics);
+  });
+
+  it('dependents lose fitness when hub is deprecated', () => {
+    const result = benchCascadeDeprecation();
+    assert.ok(result.metrics.dependent_fitness_loss > 0,
+      'Dependents should lose fitness');
+  });
+
+  it('unaffected entries remain unchanged', () => {
+    const result = benchCascadeDeprecation();
+    assert.equal(result.metrics.unaffected_change, 0, 'Unaffected deps should not change');
+    assert.equal(result.metrics.independent_change, 0, 'Independent entries should not change');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchCascadeDeprecation();
+    assert.ok(result.metrics.hypotheses.includes('AK_cascading_deprecation'));
+  });
+});
+
+describe('benchRecencyRelations [AL] (requires SQLite)', { skip: skipSqlite && 'Python/SQLite not available' }, () => {
+  it('runs and returns metrics', () => {
+    const result = benchRecencyRelations();
+    assert.equal(result.bench, 'recrel');
+    assert.ok(result.metrics);
+  });
+
+  it('recency weighting improves separation', () => {
+    const result = benchRecencyRelations();
+    assert.ok(result.metrics.separation_improvement > 0,
+      'Recency weighting should improve separation');
+  });
+
+  it('reports hypotheses', () => {
+    const result = benchRecencyRelations();
+    assert.ok(result.metrics.hypotheses.includes('AL_recency_weighted_relations'));
+  });
+});
+
 describe('runBench all', () => {
   it('returns array of results', () => {
     const results = runBench('all');
     assert.ok(Array.isArray(results));
-    assert.equal(results.length, 23);
+    assert.equal(results.length, 31);
     for (const r of results) {
       assert.ok(r.bench);
       assert.ok(r.timestamp);

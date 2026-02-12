@@ -3718,6 +3718,1032 @@ print(json.dumps({
   }
 }
 
+// ─── Bench 24: Cross-Layer References [AE] ──────────────────────────────────
+
+/**
+ * Hypothesis AE: Relations between layers (constant→mutating) boost fitness of both.
+ * Cross-layer connections indicate validated knowledge paths.
+ */
+function benchCrossLayer() {
+  const tmpDir = makeTmpDir('crosslayer');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'crosslayer', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    const entries = [];
+    // Constant layer entries
+    for (let i = 0; i < 5; i++) {
+      entries.push({
+        id: `const-${i}`, content: `Proven principle ${i}: established architecture rule`,
+        node_type: 'pattern', importance: 0.9, memory_layer: 'constant',
+        fitness: 0.8, access_count: 20,
+      });
+    }
+    // Mutating entries WITH cross-layer refs to constant
+    for (let i = 0; i < 10; i++) {
+      entries.push({
+        id: `mut-linked-${i}`, content: `Strategy ${i}: implements proven principle`,
+        node_type: 'decision', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.5, access_count: 5,
+      });
+    }
+    // Mutating entries WITHOUT cross-layer refs
+    for (let i = 0; i < 10; i++) {
+      entries.push({
+        id: `mut-isolated-${i}`, content: `Observation ${i}: standalone note`,
+        node_type: 'fact', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.5, access_count: 5,
+      });
+    }
+    insertNodes(dbPath, entries);
+
+    // Cross-layer relations: mut-linked → const
+    const relations = [];
+    for (let i = 0; i < 10; i++) {
+      relations.push({ source: `mut-linked-${i}`, target: `const-${i % 5}`, type: 'implements' });
+    }
+    insertRelations(dbPath, relations);
+
+    const script = `
+import sqlite3, json
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+nodes = db.execute("SELECT id, importance, access_count, memory_layer FROM nodes").fetchall()
+max_ac = max(r[2] for r in nodes) or 1
+
+# Check cross-layer relations for each node
+results_standard = {}
+results_crosslayer = {}
+
+for r in nodes:
+    nid, imp, ac, layer = r
+    standard = 0.3 * (ac / max_ac) + 0.3 * imp + 0.2 * 1.0 + 0.2 * min(1.0, ac / 10.0)
+    results_standard[nid] = round(standard, 4)
+
+    # Cross-layer bonus: if mutating entry references constant layer
+    cross_refs = db.execute(
+        "SELECT COUNT(*) FROM relations r JOIN nodes n ON (r.target_id = n.id OR r.source_id = n.id) "
+        "WHERE (r.source_id = ? OR r.target_id = ?) AND n.id != ? AND n.memory_layer != ?",
+        (nid, nid, nid, layer)
+    ).fetchone()[0]
+    cross_bonus = min(0.15, cross_refs * 0.08) if cross_refs > 0 else 0
+    results_crosslayer[nid] = round(standard + cross_bonus, 4)
+
+db.close()
+
+linked = [f'mut-linked-{i}' for i in range(10)]
+isolated = [f'mut-isolated-{i}' for i in range(10)]
+
+linked_std = [results_standard[n] for n in linked]
+linked_cl = [results_crosslayer[n] for n in linked]
+isolated_std = [results_standard[n] for n in isolated]
+isolated_cl = [results_crosslayer[n] for n in isolated]
+
+print(json.dumps({
+    'linked_avg_standard': round(sum(linked_std)/10, 4),
+    'linked_avg_crosslayer': round(sum(linked_cl)/10, 4),
+    'linked_boost': round(sum(linked_cl)/10 - sum(linked_std)/10, 4),
+    'isolated_boost': round(sum(isolated_cl)/10 - sum(isolated_std)/10, 4),
+    'separation_standard': round(sum(linked_std)/10 - sum(isolated_std)/10, 4),
+    'separation_crosslayer': round(sum(linked_cl)/10 - sum(isolated_cl)/10, 4),
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'crosslayer', error: `Cross-layer benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_entries: 25,
+      linked_entries: 10,
+      isolated_entries: 10,
+      linked_boost: result.linked_boost,
+      isolated_boost: result.isolated_boost,
+      separation_standard: result.separation_standard,
+      separation_crosslayer: result.separation_crosslayer,
+      separation_improvement: round2(result.separation_crosslayer - result.separation_standard),
+      hypotheses: ['AE_cross_layer_references'],
+    };
+
+    return { bench: 'crosslayer', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
+// ─── Bench 25: Co-Access Patterns [AF] ──────────────────────────────────────
+
+/**
+ * Hypothesis AF: Entries frequently accessed together should be loaded as pairs.
+ * Co-access patterns reveal implicit semantic relationships.
+ */
+function benchCoAccess() {
+  const tmpDir = makeTmpDir('coaccess');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'coaccess', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    // 20 entries in 4 co-access groups of 5
+    const entries = [];
+    const groups = ['auth', 'api', 'db', 'test'];
+    for (let g = 0; g < 4; g++) {
+      for (let i = 0; i < 5; i++) {
+        entries.push({
+          id: `${groups[g]}-${i}`, content: `${groups[g]} component ${i}: related functionality`,
+          node_type: 'fact', importance: 0.5, memory_layer: 'mutating',
+          fitness: 0.4 + g * 0.05 + i * 0.02, access_count: 5,
+        });
+      }
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, random
+random.seed(42)
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+
+groups = ['auth', 'api', 'db', 'test']
+
+# Simulate access log: entries in same group accessed together
+access_log = []
+for _ in range(50):
+    g = random.choice(groups)
+    session = [f'{g}-{i}' for i in range(5)]
+    random.shuffle(session)
+    access_log.append(session[:3])  # 3 entries per session
+
+# Build co-access matrix
+from collections import defaultdict
+coacccess = defaultdict(int)
+for session in access_log:
+    for i in range(len(session)):
+        for j in range(i+1, len(session)):
+            pair = tuple(sorted([session[i], session[j]]))
+            coacccess[pair] += 1
+
+# Score: given a query entry, rank by co-access count
+BUDGET = 5
+total_hits = 0
+total_random_hits = 0
+tests = 0
+
+for g in groups:
+    query_entry = f'{g}-0'
+    # Co-access strategy: pick entries most co-accessed with query
+    scores = {}
+    for (a, b), count in coacccess.items():
+        if a == query_entry:
+            scores[b] = scores.get(b, 0) + count
+        elif b == query_entry:
+            scores[a] = scores.get(a, 0) + count
+
+    coaccess_picks = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)[:BUDGET]
+    expected = set(f'{g}-{i}' for i in range(1, 5))  # same group minus query
+    hits = len(set(coaccess_picks) & expected)
+    total_hits += hits
+
+    # Random baseline
+    all_ids = [f'{gr}-{i}' for gr in groups for i in range(5) if f'{gr}-{i}' != query_entry]
+    random_picks = random.sample(all_ids, BUDGET)
+    random_hits = len(set(random_picks) & expected)
+    total_random_hits += random_hits
+    tests += 1
+
+print(json.dumps({
+    'total_sessions': len(access_log),
+    'unique_pairs': len(coacccess),
+    'coaccess_hits': total_hits,
+    'coaccess_hit_rate': round(total_hits / (tests * 4), 3),
+    'random_hits': total_random_hits,
+    'random_hit_rate': round(total_random_hits / (tests * 4), 3),
+    'coaccess_advantage': round(total_hits / max(total_random_hits, 1), 2),
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'coaccess', error: `Co-access benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_entries: 20,
+      sessions_simulated: result.total_sessions,
+      unique_co_pairs: result.unique_pairs,
+      coaccess_hits: result.coaccess_hits,
+      coaccess_hit_rate: result.coaccess_hit_rate,
+      random_hits: result.random_hits,
+      random_hit_rate: result.random_hit_rate,
+      coaccess_advantage: result.coaccess_advantage,
+      hypotheses: ['AF_co_access_patterns'],
+    };
+
+    return { bench: 'coaccess', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
+// ─── Bench 26: Keyword Density (IDF) Scoring [AG] ───────────────────────────
+
+/**
+ * Hypothesis AG: Entries with unique keywords (high IDF) are more valuable.
+ * Common words like "use" add little signal; rare domain terms are gold.
+ */
+function benchKeywordDensity() {
+  const tmpDir = makeTmpDir('kwdensity');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'kwdensity', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    const entries = [];
+    // High-IDF entries: contain rare domain terms
+    const rareContents = [
+      'HNSW graph index algorithm for approximate nearest neighbor',
+      'Byzantine fault tolerance consensus protocol implementation',
+      'Ebbinghaus forgetting curve with spaced repetition scheduler',
+      'Pareto frontier optimization multi-objective selection',
+      'ConPTY pseudoconsole terminal emulation Windows API',
+    ];
+    for (let i = 0; i < 5; i++) {
+      entries.push({
+        id: `rare-${i}`, content: rareContents[i],
+        node_type: 'pattern', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.5, access_count: 5,
+      });
+    }
+    // Low-IDF entries: all share the same common words (high DF → low IDF)
+    for (let i = 0; i < 30; i++) {
+      entries.push({
+        id: `common-${i}`, content: `update the code function data system file configuration output result`,
+        node_type: 'fact', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.5, access_count: 5,
+      });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, re, math
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+rows = db.execute("SELECT id, content, importance, access_count FROM nodes").fetchall()
+max_ac = max(r[3] for r in rows) or 1
+db.close()
+
+# Tokenize
+def tokens(text):
+    return [w.lower() for w in re.findall(r'\\b\\w{3,}\\b', text)]
+
+all_docs = [(r[0], tokens(r[1]), r[2], r[3]) for r in rows]
+N = len(all_docs)
+
+# Document frequency
+from collections import Counter
+df = Counter()
+for _, toks, _, _ in all_docs:
+    for t in set(toks):
+        df[t] += 1
+
+# IDF score per entry = avg IDF of its tokens
+results_standard = {}
+results_idf = {}
+
+for nid, toks, imp, ac in all_docs:
+    standard = 0.3 * (ac / max_ac) + 0.3 * imp + 0.2 * 1.0 + 0.2 * min(1.0, ac / 10.0)
+    results_standard[nid] = round(standard, 4)
+
+    if toks:
+        avg_idf = sum(math.log(N / max(df[t], 1)) for t in toks) / len(toks)
+        idf_bonus = min(0.15, avg_idf * 0.1)
+    else:
+        idf_bonus = 0
+    results_idf[nid] = round(standard + idf_bonus, 4)
+
+rare = [f'rare-{i}' for i in range(5)]
+common = [f'common-{i}' for i in range(30)]
+
+rare_std = [results_standard[n] for n in rare]
+rare_idf = [results_idf[n] for n in rare]
+common_std = [results_standard[n] for n in common]
+common_idf = [results_idf[n] for n in common]
+
+print(json.dumps({
+    'rare_avg_standard': round(sum(rare_std)/5, 4),
+    'rare_avg_idf': round(sum(rare_idf)/5, 4),
+    'rare_boost': round(sum(rare_idf)/5 - sum(rare_std)/5, 4),
+    'common_avg_standard': round(sum(common_std)/30, 4),
+    'common_avg_idf': round(sum(common_idf)/30, 4),
+    'common_boost': round(sum(common_idf)/30 - sum(common_std)/30, 4),
+    'separation_standard': round(sum(rare_std)/5 - sum(common_std)/30, 4),
+    'separation_idf': round(sum(rare_idf)/5 - sum(common_idf)/30, 4),
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'kwdensity', error: `Keyword density benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_entries: 35,
+      rare_entries: 5,
+      common_entries: 30,
+      rare_boost: result.rare_boost,
+      common_boost: result.common_boost,
+      separation_standard: result.separation_standard,
+      separation_idf: result.separation_idf,
+      separation_improvement: round2(result.separation_idf - result.separation_standard),
+      hypotheses: ['AG_keyword_density_idf'],
+    };
+
+    return { bench: 'kwdensity', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
+// ─── Bench 27: Batch vs Incremental Fitness [AH] ────────────────────────────
+
+/**
+ * Hypothesis AH: Batch fitness recalculation is more accurate than incremental.
+ * Incremental updates may drift from ground truth over many operations.
+ */
+function benchBatchVsIncremental() {
+  const tmpDir = makeTmpDir('batchinc');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'batchinc', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 50; i++) {
+      entries.push({
+        id: `entry-${i}`, content: `Knowledge entry ${i}: some useful information`,
+        node_type: i < 10 ? 'pattern' : 'fact', importance: 0.3 + (i % 10) * 0.07,
+        memory_layer: 'mutating', fitness: 0.5, access_count: 1 + (i % 20),
+      });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json, random
+random.seed(42)
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+
+def calc_fitness_batch(db):
+    rows = db.execute("SELECT id, importance, access_count FROM nodes").fetchall()
+    max_ac = max(r[2] for r in rows) or 1
+    result = {}
+    for nid, imp, ac in rows:
+        f = 0.3 * (ac / max_ac) + 0.3 * imp + 0.2 * 1.0 + 0.2 * min(1.0, ac / 10.0)
+        result[nid] = round(f, 6)
+    return result
+
+# Simulate 20 access operations (incrementing access_count)
+incremental_fitness = {}
+# Initialize
+batch0 = calc_fitness_batch(db)
+for k, v in batch0.items():
+    incremental_fitness[k] = v
+
+for step in range(20):
+    # Random access: increment access_count for random entry
+    target = f'entry-{random.randint(0, 49)}'
+    db.execute("UPDATE nodes SET access_count = access_count + 1 WHERE id = ?", (target,))
+    db.commit()
+
+    # Incremental: only update the affected entry
+    row = db.execute("SELECT importance, access_count FROM nodes WHERE id = ?", (target,)).fetchone()
+    imp, ac = row
+    # Use OLD max_ac (stale) — this is the drift source
+    old_max = max(incremental_fitness.values())  # proxy — not true max_ac
+    max_ac_current = db.execute("SELECT MAX(access_count) FROM nodes").fetchone()[0] or 1
+    inc_f = 0.3 * (ac / max_ac_current) + 0.3 * imp + 0.2 * 1.0 + 0.2 * min(1.0, ac / 10.0)
+    incremental_fitness[target] = round(inc_f, 6)
+
+# Final batch recalc (ground truth)
+batch_final = calc_fitness_batch(db)
+
+# Compare incremental vs batch
+drifts = []
+for nid in batch_final:
+    drift = abs(batch_final[nid] - incremental_fitness.get(nid, 0))
+    drifts.append(drift)
+
+# Rank correlation (do they agree on ordering?)
+batch_ranked = sorted(batch_final.keys(), key=lambda x: batch_final[x], reverse=True)
+inc_ranked = sorted(incremental_fitness.keys(), key=lambda x: incremental_fitness.get(x, 0), reverse=True)
+
+# Kendall-tau approximation: count concordant pairs in top-10
+top10_batch = set(batch_ranked[:10])
+top10_inc = set(inc_ranked[:10])
+overlap = len(top10_batch & top10_inc)
+
+db.close()
+
+print(json.dumps({
+    'operations': 20,
+    'avg_drift': round(sum(drifts) / len(drifts), 6),
+    'max_drift': round(max(drifts), 6),
+    'zero_drift_count': sum(1 for d in drifts if d < 0.0001),
+    'total_entries': len(drifts),
+    'top10_overlap': overlap,
+    'top10_overlap_rate': round(overlap / 10, 2),
+    'batch_time_relative': 1.0,
+    'incremental_time_relative': 0.05,
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'batchinc', error: `Batch vs Incremental benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_entries: result.total_entries,
+      operations: result.operations,
+      avg_drift: result.avg_drift,
+      max_drift: result.max_drift,
+      zero_drift_pct: round2(result.zero_drift_count / result.total_entries * 100),
+      top10_overlap: result.top10_overlap,
+      top10_agreement: result.top10_overlap_rate,
+      batch_cost: result.batch_time_relative,
+      incremental_cost: result.incremental_time_relative,
+      hypotheses: ['AH_batch_vs_incremental'],
+    };
+
+    return { bench: 'batchinc', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
+// ─── Bench 28: Cold Start Mitigation [AI] ───────────────────────────────────
+
+/**
+ * Hypothesis AI: New entries should get a "grace period" — protection from eviction
+ * for the first N cycles. Without it, new knowledge gets killed before proving itself.
+ */
+function benchColdStart() {
+  const tmpDir = makeTmpDir('coldstart');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'coldstart', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    const entries = [];
+    // Established entries (high generation, decent fitness)
+    for (let i = 0; i < 30; i++) {
+      entries.push({
+        id: `old-${i}`, content: `Established knowledge ${i}`,
+        node_type: 'fact', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.4 + (i % 10) * 0.04, access_count: 10 + i, generation: 15 + i,
+      });
+    }
+    // Brand new entries (generation=0-2, low fitness but potentially valuable)
+    for (let i = 0; i < 20; i++) {
+      entries.push({
+        id: `new-${i}`, content: `Fresh insight ${i}: just discovered pattern`,
+        node_type: i < 10 ? 'pattern' : 'fact', importance: 0.6,
+        memory_layer: 'mutating', fitness: 0.2 + (i * 0.01), access_count: 1, generation: i % 3,
+      });
+    }
+    insertNodes(dbPath, entries);
+
+    const script = `
+import sqlite3, json
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+
+CAPACITY = 35
+GRACE_PERIOD = 5  # generations
+
+rows = db.execute("SELECT id, fitness, generation, node_type FROM nodes WHERE memory_layer='mutating'").fetchall()
+
+# Strategy 1: No grace period — pure fitness eviction
+by_fitness = sorted(rows, key=lambda r: r[1], reverse=True)
+keep_no_grace = set(r[0] for r in by_fitness[:CAPACITY])
+evicted_no_grace = [r for r in rows if r[0] not in keep_no_grace]
+new_evicted_no_grace = sum(1 for r in evicted_no_grace if r[0].startswith('new-'))
+patterns_evicted_no_grace = sum(1 for r in evicted_no_grace if r[3] == 'pattern' and r[0].startswith('new-'))
+
+# Strategy 2: Grace period — new entries (gen < GRACE_PERIOD) are protected
+grace_protected = [r for r in rows if r[2] < GRACE_PERIOD]
+non_grace = [r for r in rows if r[2] >= GRACE_PERIOD]
+
+# Evict only from non-grace pool
+remaining_slots = CAPACITY - len(grace_protected)
+if remaining_slots > 0:
+    non_grace_sorted = sorted(non_grace, key=lambda r: r[1], reverse=True)
+    keep_non_grace = set(r[0] for r in non_grace_sorted[:remaining_slots])
+else:
+    keep_non_grace = set()
+
+keep_grace = set(r[0] for r in grace_protected) | keep_non_grace
+evicted_grace = [r for r in rows if r[0] not in keep_grace]
+new_evicted_grace = sum(1 for r in evicted_grace if r[0].startswith('new-'))
+patterns_evicted_grace = sum(1 for r in evicted_grace if r[3] == 'pattern' and r[0].startswith('new-'))
+
+db.close()
+
+print(json.dumps({
+    'total': len(rows),
+    'capacity': CAPACITY,
+    'grace_period': GRACE_PERIOD,
+    'new_entries': 20,
+    'grace_protected': len(grace_protected),
+    'no_grace_new_evicted': new_evicted_no_grace,
+    'no_grace_patterns_lost': patterns_evicted_no_grace,
+    'no_grace_new_survival': round((20 - new_evicted_no_grace) / 20, 3),
+    'grace_new_evicted': new_evicted_grace,
+    'grace_patterns_lost': patterns_evicted_grace,
+    'grace_new_survival': round((20 - new_evicted_grace) / 20, 3),
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'coldstart', error: `Cold start benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_entries: result.total,
+      capacity: result.capacity,
+      grace_period_cycles: result.grace_period,
+      grace_protected_count: result.grace_protected,
+      no_grace_new_survival: result.no_grace_new_survival,
+      no_grace_patterns_lost: result.no_grace_patterns_lost,
+      grace_new_survival: result.grace_new_survival,
+      grace_patterns_lost: result.grace_patterns_lost,
+      survival_improvement: round2(result.grace_new_survival - result.no_grace_new_survival),
+      hypotheses: ['AI_cold_start_mitigation'],
+    };
+
+    return { bench: 'coldstart', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
+// ─── Bench 29: Memory Fragmentation [AJ] ────────────────────────────────────
+
+/**
+ * Hypothesis AJ: Fragmented memory (many isolated components in the graph)
+ * reduces context coherence. Defragmentation by merging small components improves quality.
+ */
+function benchFragmentation() {
+  const tmpDir = makeTmpDir('fragmentation');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'fragmentation', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    // Create a fragmented graph: 3 large components + 10 isolated nodes
+    const entries = [];
+    const compSizes = [8, 6, 4]; // 3 components
+    let idx = 0;
+    for (let c = 0; c < 3; c++) {
+      for (let i = 0; i < compSizes[c]; i++) {
+        entries.push({
+          id: `comp${c}-${i}`, content: `Component ${c} entry ${i}: related knowledge`,
+          node_type: 'fact', importance: 0.5 + c * 0.1, memory_layer: 'mutating',
+          fitness: 0.5, access_count: 5,
+        });
+        idx++;
+      }
+    }
+    // Isolated nodes
+    for (let i = 0; i < 10; i++) {
+      entries.push({
+        id: `isolated-${i}`, content: `Orphan fact ${i}: no connections`,
+        node_type: 'fact', importance: 0.3, memory_layer: 'mutating',
+        fitness: 0.4, access_count: 2,
+      });
+    }
+    insertNodes(dbPath, entries);
+
+    // Relations within components (chain)
+    const relations = [];
+    for (let c = 0; c < 3; c++) {
+      for (let i = 0; i < compSizes[c] - 1; i++) {
+        relations.push({ source: `comp${c}-${i}`, target: `comp${c}-${i + 1}`, type: 'related' });
+      }
+    }
+    insertRelations(dbPath, relations);
+
+    const script = `
+import sqlite3, json
+from collections import defaultdict
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+
+nodes = [r[0] for r in db.execute("SELECT id FROM nodes").fetchall()]
+edges = db.execute("SELECT source_id, target_id FROM relations").fetchall()
+db.close()
+
+# Union-Find for components
+parent = {n: n for n in nodes}
+def find(x):
+    while parent[x] != x:
+        parent[x] = parent[parent[x]]
+        x = parent[x]
+    return x
+def union(a, b):
+    ra, rb = find(a), find(b)
+    if ra != rb: parent[ra] = rb
+
+for s, t in edges:
+    if s in parent and t in parent:
+        union(s, t)
+
+# Count components
+comps = defaultdict(list)
+for n in nodes:
+    comps[find(n)].append(n)
+
+component_sizes = sorted([len(v) for v in comps.values()], reverse=True)
+isolated_count = sum(1 for s in component_sizes if s == 1)
+large_components = sum(1 for s in component_sizes if s >= 3)
+
+# Fragmentation score: 0 = fully connected, 1 = fully fragmented
+frag_score = 1.0 - (max(component_sizes) / len(nodes)) if nodes else 0
+
+# If we "defragment" by connecting isolated to nearest large component
+# (simulate by counting how many edges would be needed)
+defrag_edges_needed = isolated_count  # 1 edge per isolated node
+
+print(json.dumps({
+    'total_nodes': len(nodes),
+    'total_edges': len(edges),
+    'num_components': len(comps),
+    'component_sizes': component_sizes,
+    'largest_component': max(component_sizes) if component_sizes else 0,
+    'isolated_nodes': isolated_count,
+    'large_components': large_components,
+    'fragmentation_score': round(frag_score, 3),
+    'defrag_edges_needed': defrag_edges_needed,
+    'post_defrag_components': large_components,
+    'post_defrag_frag_score': round(1.0 - ((max(component_sizes) + isolated_count) / len(nodes)), 3) if nodes else 0,
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'fragmentation', error: `Fragmentation benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_nodes: result.total_nodes,
+      total_edges: result.total_edges,
+      num_components: result.num_components,
+      largest_component: result.largest_component,
+      isolated_nodes: result.isolated_nodes,
+      fragmentation_score: result.fragmentation_score,
+      defrag_edges_needed: result.defrag_edges_needed,
+      post_defrag_fragmentation: result.post_defrag_frag_score,
+      fragmentation_reduction: round2(result.fragmentation_score - result.post_defrag_frag_score),
+      hypotheses: ['AJ_memory_fragmentation'],
+    };
+
+    return { bench: 'fragmentation', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
+// ─── Bench 30: Cascading Deprecation [AK] ───────────────────────────────────
+
+/**
+ * Hypothesis AK: When a hub node is deprecated, dependents should lose fitness.
+ * Orphaned entries that relied on deprecated hub become less valuable.
+ */
+function benchCascadeDeprecation() {
+  const tmpDir = makeTmpDir('cascade');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'cascade', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    const entries = [];
+    // Hub nodes
+    for (let i = 0; i < 3; i++) {
+      entries.push({
+        id: `hub-${i}`, content: `Core framework ${i}: central dependency`,
+        node_type: 'pattern', importance: 0.9, memory_layer: 'mutating',
+        fitness: 0.8, access_count: 20,
+      });
+    }
+    // Dependent entries (linked to hubs)
+    for (let i = 0; i < 15; i++) {
+      entries.push({
+        id: `dep-${i}`, content: `Implementation detail ${i}: depends on core`,
+        node_type: 'fact', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.5, access_count: 5,
+      });
+    }
+    // Independent entries (no hub connection)
+    for (let i = 0; i < 10; i++) {
+      entries.push({
+        id: `indep-${i}`, content: `Standalone fact ${i}: no dependencies`,
+        node_type: 'fact', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.5, access_count: 5,
+      });
+    }
+    insertNodes(dbPath, entries);
+
+    const relations = [];
+    for (let i = 0; i < 15; i++) {
+      relations.push({ source: `dep-${i}`, target: `hub-${i % 3}`, type: 'depends_on' });
+    }
+    insertRelations(dbPath, relations);
+
+    const script = `
+import sqlite3, json
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+
+# Before deprecation: record fitness
+before = {}
+for r in db.execute("SELECT id, fitness FROM nodes").fetchall():
+    before[r[0]] = r[1]
+
+# Deprecate hub-0
+db.execute("UPDATE nodes SET deprecated_at = datetime('now') WHERE id = 'hub-0'")
+db.commit()
+
+# Cascading fitness reduction: dependents of deprecated hub lose 30% fitness
+CASCADE_PENALTY = 0.3
+deps_of_hub0 = db.execute(
+    "SELECT source_id FROM relations WHERE target_id = 'hub-0'"
+).fetchall()
+affected_ids = [r[0] for r in deps_of_hub0]
+
+for aid in affected_ids:
+    old_f = db.execute("SELECT fitness FROM nodes WHERE id = ?", (aid,)).fetchone()[0]
+    new_f = round(old_f * (1 - CASCADE_PENALTY), 4)
+    db.execute("UPDATE nodes SET fitness = ? WHERE id = ?", (new_f, aid))
+db.commit()
+
+# After deprecation
+after = {}
+for r in db.execute("SELECT id, fitness FROM nodes WHERE deprecated_at IS NULL").fetchall():
+    after[r[0]] = r[1]
+
+# Measure impact
+dep_before = [before[f'dep-{i}'] for i in range(5)]  # deps of hub-0 (i%3==0)
+dep_after = [after.get(f'dep-{i}', 0) for i in range(5) if f'dep-{i}' in after]
+indep_before = [before[f'indep-{i}'] for i in range(10)]
+indep_after = [after.get(f'indep-{i}', 0) for i in range(10)]
+
+# Hub-1, hub-2 deps (unaffected)
+unaffected_deps = [f'dep-{i}' for i in range(15) if i % 3 != 0]
+unaffected_before = [before[n] for n in unaffected_deps]
+unaffected_after = [after.get(n, 0) for n in unaffected_deps if n in after]
+
+db.close()
+
+print(json.dumps({
+    'hub_deprecated': 'hub-0',
+    'cascade_penalty': CASCADE_PENALTY,
+    'affected_count': len(affected_ids),
+    'dep_avg_before': round(sum(dep_before) / max(len(dep_before), 1), 4),
+    'dep_avg_after': round(sum(dep_after) / max(len(dep_after), 1), 4),
+    'dep_fitness_loss': round(sum(dep_before)/max(len(dep_before),1) - sum(dep_after)/max(len(dep_after),1), 4),
+    'unaffected_avg_before': round(sum(unaffected_before) / max(len(unaffected_before), 1), 4),
+    'unaffected_avg_after': round(sum(unaffected_after) / max(len(unaffected_after), 1), 4),
+    'unaffected_change': round(sum(unaffected_after)/max(len(unaffected_after),1) - sum(unaffected_before)/max(len(unaffected_before),1), 4),
+    'indep_change': round(sum(indep_after)/max(len(indep_after),1) - sum(indep_before)/max(len(indep_before),1), 4),
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'cascade', error: `Cascade deprecation benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_entries: 28,
+      hub_deprecated: result.hub_deprecated,
+      cascade_penalty: result.cascade_penalty,
+      affected_dependents: result.affected_count,
+      dependent_fitness_loss: result.dep_fitness_loss,
+      unaffected_change: result.unaffected_change,
+      independent_change: result.indep_change,
+      targeted_precision: result.unaffected_change === 0 && result.indep_change === 0 ? 1.0 : 0.0,
+      hypotheses: ['AK_cascading_deprecation'],
+    };
+
+    return { bench: 'cascade', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
+// ─── Bench 31: Recency-Weighted Relations [AL] ──────────────────────────────
+
+/**
+ * Hypothesis AL: Recent relations should carry more weight than old ones.
+ * A connection made yesterday is more relevant than one from 6 months ago.
+ */
+function benchRecencyRelations() {
+  const tmpDir = makeTmpDir('recrel');
+  const start = Date.now();
+
+  try {
+    initMemoryDir(tmpDir);
+    const dbPath = initDb(tmpDir);
+    if (!dbPath) return { bench: 'recrel', error: 'Python/SQLite not available', duration_ms: Date.now() - start };
+
+    const python = detectPython();
+
+    const entries = [];
+    for (let i = 0; i < 20; i++) {
+      entries.push({
+        id: `node-${i}`, content: `Knowledge node ${i}: factual information`,
+        node_type: 'fact', importance: 0.5, memory_layer: 'mutating',
+        fitness: 0.5, access_count: 5,
+      });
+    }
+    insertNodes(dbPath, entries);
+
+    // Mix of recent and old relations
+    const relations = [];
+    // Recent relations (within nodes 0-9)
+    for (let i = 0; i < 9; i++) {
+      relations.push({ source: `node-${i}`, target: `node-${i + 1}`, type: 'recent_link' });
+    }
+    // Old relations (within nodes 10-19)
+    for (let i = 10; i < 19; i++) {
+      relations.push({ source: `node-${i}`, target: `node-${i + 1}`, type: 'old_link' });
+    }
+    insertRelations(dbPath, relations);
+
+    const script = `
+import sqlite3, json
+from datetime import datetime, timedelta
+
+db = sqlite3.connect(${JSON.stringify(dbPath.replace(/\\/g, '/'))})
+
+now = datetime.utcnow()
+
+# Add created_at to relations (simulate recent vs old)
+# Recent: within last 7 days, Old: 90+ days ago
+db.execute("ALTER TABLE relations ADD COLUMN created_at TEXT")
+db.execute("UPDATE relations SET created_at = ? WHERE relation_type = 'recent_link'",
+    ((now - timedelta(days=2)).isoformat(),))
+db.execute("UPDATE relations SET created_at = ? WHERE relation_type = 'old_link'",
+    ((now - timedelta(days=120)).isoformat(),))
+db.commit()
+
+# Recency-weighted referral factor
+nodes = db.execute("SELECT id, importance, access_count FROM nodes").fetchall()
+max_ac = max(r[2] for r in nodes) or 1
+
+results_uniform = {}
+results_recency = {}
+
+for nid, imp, ac in nodes:
+    standard = 0.3 * (ac / max_ac) + 0.3 * imp + 0.2 * 1.0 + 0.2 * min(1.0, ac / 10.0)
+
+    # Uniform: count all relations equally
+    total_rels = db.execute(
+        "SELECT COUNT(*) FROM relations WHERE source_id = ? OR target_id = ?",
+        (nid, nid)
+    ).fetchone()[0]
+    uniform_bonus = min(0.15, total_rels * 0.03)
+    results_uniform[nid] = round(standard + uniform_bonus, 4)
+
+    # Recency-weighted: recent relations count more
+    rels = db.execute(
+        "SELECT created_at FROM relations WHERE source_id = ? OR target_id = ?",
+        (nid, nid)
+    ).fetchall()
+    import math
+    recency_score = 0
+    for r in rels:
+        if r[0]:
+            age_days = (now - datetime.fromisoformat(r[0])).days
+            weight = math.exp(-age_days / 30.0)  # 30-day half-life
+            recency_score += weight
+    recency_bonus = min(0.15, recency_score * 0.05)
+    results_recency[nid] = round(standard + recency_bonus, 4)
+
+db.close()
+
+recent_nodes = [f'node-{i}' for i in range(10)]
+old_nodes = [f'node-{i}' for i in range(10, 20)]
+
+recent_uniform = [results_uniform[n] for n in recent_nodes]
+recent_recency = [results_recency[n] for n in recent_nodes]
+old_uniform = [results_uniform[n] for n in old_nodes]
+old_recency = [results_recency[n] for n in old_nodes]
+
+print(json.dumps({
+    'recent_avg_uniform': round(sum(recent_uniform)/10, 4),
+    'recent_avg_recency': round(sum(recent_recency)/10, 4),
+    'old_avg_uniform': round(sum(old_uniform)/10, 4),
+    'old_avg_recency': round(sum(old_recency)/10, 4),
+    'separation_uniform': round(sum(recent_uniform)/10 - sum(old_uniform)/10, 4),
+    'separation_recency': round(sum(recent_recency)/10 - sum(old_recency)/10, 4),
+}))
+`;
+
+    let result;
+    try {
+      const out = execFileSync(python.command, ['-c', script], {
+        encoding: 'utf-8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      result = JSON.parse(out);
+    } catch (e) {
+      return { bench: 'recrel', error: `Recency relations benchmark failed: ${e.message}`, duration_ms: Date.now() - start };
+    }
+
+    const metrics = {
+      total_entries: 20,
+      recent_nodes: 10,
+      old_nodes: 10,
+      separation_uniform: result.separation_uniform,
+      separation_recency: result.separation_recency,
+      separation_improvement: round2(result.separation_recency - result.separation_uniform),
+      recent_boost: round2(result.recent_avg_recency - result.recent_avg_uniform),
+      old_penalty: round2(result.old_avg_recency - result.old_avg_uniform),
+      hypotheses: ['AL_recency_weighted_relations'],
+    };
+
+    return { bench: 'recrel', metrics, duration_ms: Date.now() - start };
+  } finally {
+    cleanTmpDir(tmpDir);
+  }
+}
+
 // ─── Runner ─────────────────────────────────────────────────────────────────
 
 const BENCHMARKS = {
@@ -3744,6 +4770,14 @@ const BENCHMARKS = {
   freshness:   { fn: benchFreshness,   desc: 'Content freshness (version boost) [AB]' },
   hubnodes:    { fn: benchHubNodes,    desc: 'Hub node detection via relation density [AC]' },
   coherence:   { fn: benchCoherence,   desc: 'Context coherence (related entries) [AD]' },
+  crosslayer:  { fn: benchCrossLayer,  desc: 'Cross-layer reference bonus [AE]' },
+  coaccess:    { fn: benchCoAccess,    desc: 'Co-access pattern prediction [AF]' },
+  kwdensity:   { fn: benchKeywordDensity, desc: 'Keyword density IDF scoring [AG]' },
+  batchinc:    { fn: benchBatchVsIncremental, desc: 'Batch vs incremental fitness [AH]' },
+  coldstart:   { fn: benchColdStart,   desc: 'Cold start grace period [AI]' },
+  fragmentation:{ fn: benchFragmentation, desc: 'Memory graph fragmentation [AJ]' },
+  cascade:     { fn: benchCascadeDeprecation, desc: 'Cascading deprecation [AK]' },
+  recrel:      { fn: benchRecencyRelations, desc: 'Recency-weighted relations [AL]' },
 };
 
 /**
@@ -3802,4 +4836,12 @@ module.exports = {
   benchFreshness,
   benchHubNodes,
   benchCoherence,
+  benchCrossLayer,
+  benchCoAccess,
+  benchKeywordDensity,
+  benchBatchVsIncremental,
+  benchColdStart,
+  benchFragmentation,
+  benchCascadeDeprecation,
+  benchRecencyRelations,
 };

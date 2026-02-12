@@ -304,6 +304,68 @@ function printResult(r) {
       console.log(`  Graph-walk vs fitness-only: +${m.graph_vs_fitness}`);
       if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
       break;
+
+    case 'crosslayer':
+      console.log(`  Linked: ${m.linked_entries}, Isolated: ${m.isolated_entries}`);
+      console.log(`  Linked boost: +${m.linked_boost}, Isolated boost: +${m.isolated_boost}`);
+      console.log(`  Separation: standard=${m.separation_standard} → crosslayer=${m.separation_crosslayer} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'coaccess':
+      console.log(`  Sessions: ${m.sessions_simulated}, Unique pairs: ${m.unique_co_pairs}`);
+      console.log(`  Co-access hits: ${m.coaccess_hits} (${pct(m.coaccess_hit_rate)})`);
+      console.log(`  Random hits: ${m.random_hits} (${pct(m.random_hit_rate)})`);
+      console.log(`  Advantage: ${m.coaccess_advantage}x over random`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'kwdensity':
+      console.log(`  Rare: ${m.rare_entries}, Common: ${m.common_entries}`);
+      console.log(`  Rare boost: +${m.rare_boost}, Common boost: +${m.common_boost}`);
+      console.log(`  Separation: standard=${m.separation_standard} → IDF=${m.separation_idf} (+${m.separation_improvement})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'batchinc':
+      console.log(`  Operations: ${m.operations}, Entries: ${m.total_entries}`);
+      console.log(`  Avg drift: ${m.avg_drift}, Max drift: ${m.max_drift}`);
+      console.log(`  Zero-drift entries: ${m.zero_drift_pct}%`);
+      console.log(`  Top-10 overlap: ${m.top10_overlap}/10 (${pct(m.top10_agreement)})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'coldstart':
+      console.log(`  Capacity: ${m.capacity}, Grace period: ${m.grace_period_cycles} cycles`);
+      console.log(`  No grace: new survival=${pct(m.no_grace_new_survival)}, patterns lost=${m.no_grace_patterns_lost}`);
+      console.log(`  With grace: new survival=${pct(m.grace_new_survival)}, patterns lost=${m.grace_patterns_lost}`);
+      console.log(`  Survival improvement: +${pct(m.survival_improvement)}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'fragmentation':
+      console.log(`  Nodes: ${m.total_nodes}, Edges: ${m.total_edges}`);
+      console.log(`  Components: ${m.num_components}, Largest: ${m.largest_component}`);
+      console.log(`  Isolated nodes: ${m.isolated_nodes}`);
+      console.log(`  Fragmentation: ${m.fragmentation_score} → ${m.post_defrag_fragmentation} (-${m.fragmentation_reduction})`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'cascade':
+      console.log(`  Hub deprecated: ${m.hub_deprecated}, Cascade penalty: ${m.cascade_penalty}`);
+      console.log(`  Affected dependents: ${m.affected_dependents}`);
+      console.log(`  Dependent fitness loss: -${m.dependent_fitness_loss}`);
+      console.log(`  Unaffected change: ${m.unaffected_change}, Independent change: ${m.independent_change}`);
+      console.log(`  Targeted precision: ${pct(m.targeted_precision)}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
+
+    case 'recrel':
+      console.log(`  Recent: ${m.recent_nodes}, Old: ${m.old_nodes}`);
+      console.log(`  Separation: uniform=${m.separation_uniform} → recency=${m.separation_recency} (+${m.separation_improvement})`);
+      console.log(`  Recent boost: +${m.recent_boost}, Old penalty: ${m.old_penalty}`);
+      if (m.hypotheses) console.log(`  Hypotheses: ${m.hypotheses.join(', ')}`);
+      break;
   }
 
   console.log('');
@@ -357,6 +419,14 @@ function printAllResults(results) {
       case 'freshness': console.log(`  [+] freshness: updated +${m.updated_boost}, separation +${m.separation_improvement}`); break;
       case 'hubnodes': console.log(`  [+] hubnodes: hub +${m.hub_boost}, separation +${m.separation_improvement}`); break;
       case 'coherence': console.log(`  [+] coherence: best=${m.best_strategy} (${m.best_coherence})`); break;
+      case 'crosslayer': console.log(`  [+] crosslayer: linked +${m.linked_boost}, separation +${m.separation_improvement}`); break;
+      case 'coaccess': console.log(`  [+] coaccess: ${m.coaccess_advantage}x advantage over random`); break;
+      case 'kwdensity': console.log(`  [+] kwdensity: rare +${m.rare_boost}, separation +${m.separation_improvement}`); break;
+      case 'batchinc': console.log(`  [+] batchinc: top10 overlap=${m.top10_overlap}/10, avg drift=${m.avg_drift}`); break;
+      case 'coldstart': console.log(`  [+] coldstart: survival +${pct(m.survival_improvement)} with grace period`); break;
+      case 'fragmentation': console.log(`  [+] fragmentation: score=${m.fragmentation_score}→${m.post_defrag_fragmentation}`); break;
+      case 'cascade': console.log(`  [+] cascade: dep loss=-${m.dependent_fitness_loss}, precision=${pct(m.targeted_precision)}`); break;
+      case 'recrel': console.log(`  [+] recrel: separation +${m.separation_improvement} with recency weighting`); break;
     }
   }
   console.log('');
